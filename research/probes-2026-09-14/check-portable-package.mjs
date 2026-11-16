@@ -140,7 +140,22 @@ try {
   check('glue 模块可加载', false, e.message.slice(0, 80));
 }
 
-fs.rmSync(sandbox, { recursive: true, force: true });
+// ⚠️ 清理必须区别对待：`.portable-check` 在历史提交里已被 git 跟踪，
+// 直接 rmSync 会在跑一次验证后把受版本控制的文件全部删掉（实测发生）。
+// 因此只在「没有 git 记录」时才删除；有记录则保留，由 git 管理。
+const trackedInGit = (() => {
+  try {
+    const out = execFileSync('git', ['ls-files', '--', '.portable-check'], {
+      cwd: ROOT,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    return out.trim() !== '';
+  } catch {
+    return false; // 不是 git 仓库 / 没有 git：退化为可删除
+  }
+})();
+if (!trackedInGit) fs.rmSync(sandbox, { recursive: true, force: true });
 
 console.log(fail === 0 ? '\n[OK] 便携包端到端验证通过' : `\n[FAIL] ${fail} 项失败`);
 process.exit(fail > 0 ? 1 : 0);
