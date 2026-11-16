@@ -1,36 +1,31 @@
 // tools/client-render-check.mjs
 // 在 Node 里模拟浏览器环境，加载 client.js 并渲染卡片，验证不抛异常。
 // 用 react-dom/server 做 SSR 渲染 —— 能真正执行组件代码而不需要浏览器 DOM。
+//
+// ⚠️ SSR 不执行 effect，因此这里只能验证「给定 state 的静态产出」。
+// 涉及 effect 的行为（积分胶囊的归属判定与取数）由
+// tools/client-mount-check.mjs 用真 react + jsdom 验证。
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createRequire } from 'node:module';
+import { findRenderDeps, printMissingDepsHelp } from './render-deps.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT = path.resolve(HERE, '..');
-const require = createRequire(import.meta.url);
 
-// 定位 react 与 react-dom：优先本包，其次 DSH 的 profile node_modules。
-function loadDep(name) {
-  try {
-    return require(name);
-  } catch {
-    const roaming = process.env.APPDATA ?? path.join(process.env.USERPROFILE ?? '', 'AppData', 'Roaming');
-    const dshModules = path.join(roaming, 'dsh-desktop', 'harness', 'profiles', 'node_modules');
-    const req2 = createRequire(path.join(dshModules, 'noop.js'));
-    return req2(name);
-  }
-}
-
-let react, jsxRuntime, server;
-try {
-  react = loadDep('react');
-  jsxRuntime = loadDep('react/jsx-runtime');
-  server = loadDep('react-dom/server');
-} catch (e) {
-  console.error('无法加载 react/react-dom，请在有 DSH 依赖的环境运行：', e.message);
+// 定位渲染依赖：优先本包，其次 QWEN_RENDER_DEPS / DSH profile。
+// 查找规则集中在 render-deps.mjs —— 过去这里硬编码了 Windows 的
+// %APPDATA% 路径，在 Linux 上永远找不到依赖。
+const NEEDED = ['react', 'react/jsx-runtime', 'react-dom/server'];
+const deps = findRenderDeps(PLUGIN_ROOT, NEEDED);
+if (deps === null) {
+  printMissingDepsHelp(NEEDED, ['react', 'react-dom']);
   process.exit(2);
 }
+
+const react = deps.require('react');
+const jsxRuntime = deps.require('react/jsx-runtime');
+const server = deps.require('react-dom/server');
 
 // ---- 捕获 client.js 注册的模块 ----
 let registered = null;
@@ -115,13 +110,26 @@ try {
   process.exit(1);
 }
 
-if (slotsRegistered.length !== 1) {
-  console.error(`❌ 期望注册 1 个卡片，实际 ${slotsRegistered.length}`);
+// 现在会注册两处：设置卡片（keyed provider-card）+ 输入框积分胶囊（list）。
+if (slotsRegistered.length !== 2) {
+  console.error(`❌ 期望注册 2 个槽位（卡片 + 胶囊），实际 ${slotsRegistered.length}`);
   process.exit(1);
 }
 
 // ---- SSR 渲染：两种状态都要能渲染 ----
-const { Component, meta } = slotsRegistered[0];
+// 只渲染卡片：胶囊的首帧永远是 null（数据要等 effect 拉回来），
+// SSR 渲染它只会得到空字符串，证明不了任何事——那部分由
+// tools/client-mount-check.mjs 用真 DOM + effect 验证。
+const cardEntry = slotsRegistered.find(
+  (entry) => entry.meta.name === 'settings.models.provider-card',
+);
+if (cardEntry === undefined) {
+  console.error(
+    `❌ 未注册设置卡片，实际槽位：${slotsRegistered.map((e) => e.meta.name).join(', ')}`,
+  );
+  process.exit(1);
+}
+const { Component, meta } = cardEntry;
 const t = ctx.locale.bind('settings.qwenwork');
 const inject = meta.inject();
 

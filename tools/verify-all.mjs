@@ -18,6 +18,24 @@ const STEPS = [
   // 而这些探针会发起真实 API 调用并消耗账号积分。下方 guard 会拦住这类回退。
   { name: '全量单元测试', args: ['--test'] },
   { name: 'client.js 模块加载契约', args: ['tools/client-load-check.mjs'] },
+  // 真实挂载渲染：用真 react + jsdom **执行 effect**，验证积分胶囊的归属判定
+  // （选中千问才渲染、否则连请求都不发）。逻辑桩与 SSR 都证明不了这点：
+  // 胶囊首帧永远是 null，只有 effect 跑起来才能区分「没归属」与「还没读到数」。
+  //
+  // 本仓库零运行时依赖，不预装 react/jsdom，因此缺依赖时该脚本以 **exit 2**
+  // 表示「跳过」——由 skipExitCodes 认下，不算失败。
+  {
+    name: '客户端真实挂载渲染（需 react/jsdom）',
+    args: ['tools/client-mount-check.mjs'],
+    skipExitCodes: [2],
+  },
+  // SSR 静态渲染：卡片在各种数据形态下的文案与转义（含恶意昵称、null 项、
+  // 除零保护）。同样依赖 react，缺依赖时 exit 2 跳过。
+  {
+    name: '客户端 SSR 渲染（需 react）',
+    args: ['tools/client-render-check.mjs'],
+    skipExitCodes: [2],
+  },
   { name: 'host 入口可加载性', args: ['tools/host-load-check.mjs'] },
   { name: 'provider 注册行为契约', args: ['tools/apply-check.mjs'] },
   { name: '接缝失败诊断（无静默降级）', args: ['tools/seam-failure-check.mjs'] },
@@ -90,9 +108,15 @@ for (const step of STEPS) {
     cwd: root,
     stdio: 'inherit',
   });
+  // 可选步骤用约定退出码表示「跳过」（如缺可选依赖），不算失败。
+  const skipCodes = step.skipExitCodes ?? [];
   if (result.status !== 0) {
-    failed += 1;
-    process.stdout.write(`✖ 失败: ${step.name} (exit ${result.status})\n`);
+    if (skipCodes.includes(result.status)) {
+      process.stdout.write(`○ 跳过: ${step.name} (exit ${result.status}，缺少可选依赖)\n`);
+    } else {
+      failed += 1;
+      process.stdout.write(`✖ 失败: ${step.name} (exit ${result.status})\n`);
+    }
   }
 }
 

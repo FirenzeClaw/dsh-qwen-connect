@@ -72,6 +72,10 @@ function collectFiles() {
   addIfFile('一键卸载.cmd');
   // 渲染自检：无浏览器也能验证卡片组件不崩、数据渲染正确
   addIfFile('tools/client-render-check.mjs');
+  // 上面两个渲染自检的共享依赖定位器（找不到 react 时给出可操作的指引，
+  // 而不是硬编码某个平台的路径）。它们 import 它，缺了就装完即崩。
+  addIfFile('tools/render-deps.mjs');
+  addIfFile('tools/client-mount-check.mjs');
   // 模型显示预览：确认倍率/标记映射到选择器的效果
   addIfFile('tools/models-preview.mjs');
   // token 统计自检：确认 usage 已下发（DSH 靠它显示 token 数）
