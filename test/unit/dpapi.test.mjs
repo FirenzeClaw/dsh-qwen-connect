@@ -43,17 +43,36 @@ test('PowerShell script performs no file writes', () => {
 });
 
 test('isSupportedPlatform reflects win32', () => {
+  // 该函数只回答「DPAPI 路径是否可用」——Linux 走 Secret Service，不是它的职责
   assert.equal(isSupportedPlatform(), process.platform === 'win32');
 });
 
+test('Linux 不支持 DPAPI，unprotectMasterKey 明确报 UNSUPPORTED_PLATFORM', {
+  skip: process.platform === 'win32' ? 'Windows 上有 DPAPI' : false,
+}, () => {
+  const anyBlob = Buffer.concat([Buffer.from('DPAPI'), crypto.randomBytes(32)]).toString('base64');
+  assert.throws(() => unprotectMasterKey(anyBlob), (e) => {
+    assert.equal(e.code, ErrorCode.UNSUPPORTED_PLATFORM);
+    assert.ok(e.recovery.length > 0);
+    return true;
+  });
+});
+
 test('unprotectMasterKey rejects empty/invalid encrypted_key', () => {
-  assert.throws(() => unprotectMasterKey(''), (e) => e.code === ErrorCode.CREDENTIALS_MALFORMED);
-  assert.throws(() => unprotectMasterKey(null), (e) => e.code === ErrorCode.CREDENTIALS_MALFORMED);
+  // 非 Windows 平台会先命中 UNSUPPORTED_PLATFORM，属于预期行为而非缺陷
+  const expected = isSupportedPlatform()
+    ? (e) => e.code === ErrorCode.CREDENTIALS_MALFORMED
+    : (e) => e.code === ErrorCode.UNSUPPORTED_PLATFORM;
+  assert.throws(() => unprotectMasterKey(''), expected);
+  assert.throws(() => unprotectMasterKey(null), expected);
 });
 
 test('unprotectMasterKey on non-DPAPI blob -> CREDENTIALS_MALFORMED', () => {
   const bad = Buffer.from('NOTDPAPI' + 'x'.repeat(30)).toString('base64');
-  assert.throws(() => unprotectMasterKey(bad), (e) => e.code === ErrorCode.CREDENTIALS_MALFORMED);
+  const expected = isSupportedPlatform()
+    ? (e) => e.code === ErrorCode.CREDENTIALS_MALFORMED
+    : (e) => e.code === ErrorCode.UNSUPPORTED_PLATFORM;
+  assert.throws(() => unprotectMasterKey(bad), expected);
 });
 
 test('real DPAPI round trip (Windows only)', { skip: process.platform !== 'win32' ? 'Windows only' : false }, () => {
