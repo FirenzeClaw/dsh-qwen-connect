@@ -105,11 +105,44 @@ test('Config 的每个字段都带中文描述（设置页直接展示这段文�
   }
 });
 
+/**
+ * 取 volatile 字段的真实值。
+ *
+ * ⚠️ 标了 `.volatile()` 的配置字段，Cordis 校验后交给插件的是**只读引用**
+ * （`{ get() }`），不是普通值——直接读会拿到对象、`JSON.stringify` 是 `{}`。
+ * 测试必须按运行时形态取值，否则会误以为 schema 没生效。
+ */
+function resolvedValue(field) {
+  return typeof field?.get === 'function' ? field.get() : field;
+}
+
 test('默认白名单只放行 DeepSeek-V4.1-Flash', () => {
   const defaults = index.Config({});
-  assert.deepEqual(defaults.allowedModelIds, ['deepseek-flash']);
-  assert.equal(defaults.refreshCatalogOnStart, true);
-  assert.equal(defaults.showCredits, true);
+  assert.deepEqual(resolvedValue(defaults.allowedModelIds), ['deepseek-flash']);
+  assert.equal(resolvedValue(defaults.refreshCatalogOnStart), true);
+  assert.equal(resolvedValue(defaults.showCredits), true);
+});
+
+test('配置字段必须可编辑：每个字段都标了 volatile', () => {
+  // 这是「配置页有控件但点了没反应」的根因护栏：
+  // dsh-settings 的 describe() 在没有任何 volatile 字段时**整条丢弃**该条目，
+  // 于是客户端拿不到 form、页面永远「正在读取配置…」；write() 也会拒绝。
+  // 两个症状都不报错，只能靠这条断言守住。
+  const fields = configProps(index.Config);
+  const plain = Object.entries(fields).filter(([, node]) => node.meta?.volatile !== true);
+  assert.deepEqual(
+    plain.map(([key]) => key),
+    [],
+    '以下字段没标 .volatile()，DSH 不会把它们暴露成可编辑配置',
+  );
+});
+
+test('Config 校验后字段变成 volatile 引用（apply 必须解引用）', () => {
+  // 这条固定运行时契约：不是普通值，必须 .get()。
+  const resolved = index.Config({ thinkingEnabled: false });
+  const field = resolved.thinkingEnabled;
+  assert.equal(typeof field?.get, 'function', 'volatile 字段应带 get()');
+  assert.equal(field.get(), false);
 });
 
 test('describeEffectiveConfig 返回脱敏的生效配置副本', () => {
