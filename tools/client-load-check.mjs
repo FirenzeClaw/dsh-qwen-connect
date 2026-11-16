@@ -26,6 +26,29 @@ function makeReactStub() {
   };
 }
 
+/**
+ * 会**真的执行** effect 的 React 桩，用来验证副作用（是否发起请求）。
+ *
+ * `useEffect` 在渲染时同步调用回调：判断「没归属时连 fetch 都不启动」
+ * 只能靠副作用是否发生，靠返回值区分不了（两种情况都返回 null）。
+ */
+function makeEffectfulReactStub() {
+  const cleanups = [];
+  const h = (type, props, key) => ({ type, props, key });
+  return {
+    cleanups,
+    stub: {
+      useState: (init) => [typeof init === 'function' ? init() : init, () => {}],
+      useEffect: (fn) => {
+        const result = fn();
+        if (typeof result === 'function') cleanups.push(result);
+      },
+      useMemo: (fn) => fn(),
+      createElement: h,
+    },
+  };
+}
+
 const jsxRuntimeStub = {
   jsx: (type, props, key) => ({ type, props, key }),
   jsxs: (type, props, key) => ({ type, props, key }),
@@ -101,18 +124,158 @@ const ctx = {
 
 mod.apply(ctx);
 
-assert.equal(registrations.length, 1, '必须恰好注册一个卡片');
-const { descriptor, component } = registrations[0];
-line(`✔ slot 注册: name=${descriptor.name} key=${descriptor.key} priority=${descriptor.priority}`);
+assert.equal(registrations.length, 2, '必须注册两个 slot：设置卡片 + 输入框积分胶囊');
 
-assert.equal(descriptor.name, 'settings.plugin.item', '必须注册到插件设置页的 slot');
-assert.equal(descriptor.key, 'qwenwork', '0.1.2 用 key（而非旧版 id）');
-assert.equal(typeof descriptor.priority, 'number', '0.1.2 用 priority（而非旧版 order）');
-assert.equal(typeof component, 'function', '第二参数必须是组件函数');
+/** 按槽位名取注册项，缺失时直接失败并说明期望。 */
+const regOf = (slotName) => {
+  const found = registrations.find((r) => r.descriptor.name === slotName);
+  assert.ok(found !== undefined, `必须注册到槽位 ${slotName}`);
+  return found;
+};
+
+// ---- 设置卡片：provider 卡片扩展区 ---------------------------------------
+const card = regOf('settings.models.provider-card');
+assert.equal(card.descriptor.key, 'qwenwork', 'keyed 槽位用 provider 的 settingsNs 作键');
+assert.equal(typeof card.component, 'function', '第二参数必须是组件函数');
+line(`✔ 设置卡片: name=${card.descriptor.name} key=${card.descriptor.key}`);
+
+// ---- 积分胶囊：输入框右侧 -------------------------------------------------
+const pill = regOf('conversation.input.right');
+assert.equal(pill.descriptor.id, 'dsh-qwen-connect-credits', 'list 槽位用 id 区分自己');
+assert.equal(typeof pill.descriptor.order, 'number', 'list 槽位用 order 排序');
+assert.equal(typeof pill.component, 'function', '第二参数必须是组件函数');
+line(`✔ 积分胶囊: name=${pill.descriptor.name} id=${pill.descriptor.id} order=${pill.descriptor.order}`);
+
+// list 槽位用 id、keyed 槽位用 key——混用会让注册静默落到错误的格子
+assert.equal('id' in card.descriptor, false, 'keyed 槽位不应使用 id');
+assert.equal('key' in pill.descriptor, false, 'list 槽位不应使用 key');
 
 assert.ok(localeRegistered !== null, '必须注册文案');
 line(`✔ locale: ns=${localeRegistered.ns} 语言=${Object.keys(localeRegistered.copy).join('/')}`);
 assert.ok('zh' in localeRegistered.copy && 'en' in localeRegistered.copy, 'zh 与 en 都要有');
+
+// 胶囊引用的两个键必须存在，否则 t() 会把键名原样显示给用户
+for (const localeId of ['zh', 'en']) {
+  const dict = localeRegistered.copy[localeId];
+  for (const key of ['pill.title', 'pill.credits']) {
+    assert.equal(
+      typeof dict[key],
+      'string',
+      `${localeId} 字典缺少胶囊文案 ${key}（t() 会退回键名）`,
+    );
+  }
+}
+line('✔ 胶囊文案 pill.title / pill.credits 在 zh、en 中都存在');
+
+// ---- 积分胶囊的归属判定：只在选中千问模型时渲染 ---------------------------
+/**
+ * 用假 React 渲染胶囊，观察它的返回值。
+ *
+ * 桩里的 useState 直接返回初值、useEffect 不执行，因此这里验证的是
+ * **同步判定路径**：provider 不匹配时必须立刻 return null（连 effect
+ * 都不会被安排），provider 匹配时才继续走读数逻辑。
+ */
+function renderPill(projection) {
+  const fakeProps = {
+    t: (key) => key,
+    useProjection: (key) => (key === 'modelSelection' ? projection : undefined),
+  };
+  // 胶囊用 react.createElement('span', ...) 或返回 null
+  return pill.component(fakeProps);
+}
+
+// 1) 未选中千问 → 不渲染
+assert.equal(
+  renderPill({ next: { provider: 'deepseek', model: 'x' }, lastUsed: null }),
+  null,
+  '其他 provider 的会话不得显示千问积分',
+);
+
+// 2) 完全没有投影（能力缺失）→ 不渲染（保守）
+assert.equal(renderPill(undefined), null, '投影缺失时必须保守地不渲染');
+
+// 3) next 优先于 lastUsed：已切换但未消费的选择才是输入框显示的
+assert.equal(
+  renderPill({ next: { provider: 'qwenwork', model: 'deepseek-flash' }, lastUsed: { provider: 'deepseek' } }),
+  null,
+  '选中千问但还没拿到读数时应返回 null（不是渲染空壳）',
+);
+
+line('✔ 胶囊归属判定：非千问 provider / 投影缺失 / 尚无读数 均不渲染');
+
+// ---- 副作用验证：没归属时不得发起任何请求 ---------------------------------
+// 上面用的是「不执行 effect」的桩，只能证明返回值；这里换一个有副作用的桩
+// 重新加载一次，统计 fetch 次数——归属判定不通过时连 fetch 都不该启动。
+{
+  let loaded2 = null;
+  const windowStub2 = {
+    __ModuleLoader__: {
+      load(spec) {
+        loaded2 = spec;
+      },
+    },
+  };
+  const effectful = makeEffectfulReactStub();
+  const fakeRequire2 = (spec) => {
+    if (spec === 'react') return effectful.stub;
+    if (spec === 'react/jsx-runtime') return jsxRuntimeStub;
+    throw new Error(`client.js 请求了未预期的模块: ${spec}`);
+  };
+  new Function('window', `${source}\n`)(windowStub2);
+  const mod2 = loaded2.factory(fakeRequire2);
+
+  // 记录所有注册项，取出胶囊组件
+  const regs2 = [];
+  const ctx2 = {
+    effect(fn) {
+      fn();
+      return () => {};
+    },
+    locale: {
+      register: () => () => {},
+      bind: () => (key) => key,
+    },
+    slots: {
+      inject: (_name, fn) => {
+        fn();
+        return () => {};
+      },
+      register: (descriptor, component) => {
+        regs2.push({ descriptor, component });
+        return () => {};
+      },
+    },
+  };
+  mod2.apply(ctx2);
+  const pill2 = regs2.find((r) => r.descriptor.name === 'conversation.input.right');
+  assert.ok(pill2 !== undefined, '第二次加载也必须注册胶囊');
+
+  // 拦掉真实网络：任何 fetch 都计数，避免测试真的打到 127.0.0.1:3080
+  const realFetch = globalThis.fetch;
+  let fetchCount = 0;
+  globalThis.fetch = async () => {
+    fetchCount += 1;
+    return { ok: false, json: async () => ({}) };
+  };
+  try {
+    // (a) 选中其他 provider：必须 0 次
+    pill2.component({
+      t: (key) => key,
+      useProjection: () => ({ next: { provider: 'deepseek', model: 'x' }, lastUsed: null }),
+    });
+    assert.equal(fetchCount, 0, '其他 provider 会话不得发起千问状态请求（不该白开轮询）');
+
+    // (b) 选中千问：必须发起
+    pill2.component({
+      t: (key) => key,
+      useProjection: () => ({ next: { provider: 'qwenwork', model: 'deepseek-flash' }, lastUsed: null }),
+    });
+    assert.equal(fetchCount, 1, '选中千问后应读取一次状态');
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+  line('✔ 副作用：非千问 provider 时 0 次请求；选中千问后 1 次请求');
+}
 
 // ---- 关键健壮性：slot API 坏掉时必须降级而非抛出 --------------------------
 const brokenCtx = {
