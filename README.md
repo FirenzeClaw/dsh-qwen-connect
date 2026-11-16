@@ -146,21 +146,37 @@ Copy-Item "$w\_backup-qwen-connect-20260911-141226\cordis.patch.yml" "$w\cordis.
 ## 已知限制
 
 1. **平台**：Windows（DPAPI）与 Linux（Secret Service）均已支持；macOS 未实现。
-2. **工具调用 / 视觉输入未支持**：文本流式对话与多轮已打通；但
-   `tool_calls` 未做协议转换，图片输入会被 shim 丢弃（`toQwenWorkMessages()`
-   只保留 `type: 'text'` 块）。**不要依赖这两项能力。**
-3. **DPAPI 依赖 PowerShell 兜底**：本机未装 `koffi`/`ffi-napi`，走 PowerShell
+2. **DPAPI 依赖 PowerShell 兜底**：本机未装 `koffi`/`ffi-napi`，走 PowerShell
    子进程（每进程约几十毫秒）。
-4. **模型目录是静态的**：`/api/v2/model/list` 需要 WASM 签名（403），
+3. **模型目录是静态的**：`/api/v2/model/list` 需要 WASM 签名（403），
    目前用内置的三模型目录，不动态拉取。
-5. **`quota.total` 对 Free 套餐为 null**：卡片按「未提供」处理，不显示 0%。
-6. **签名依赖官方 WASM**：`research/wasm.bin` 是从 App 产物提取的签名模块，
+4. **`quota.total` 对 Free 套餐为 null**：卡片按「未提供」处理，不显示 0%。
+5. **签名依赖官方 WASM**：`research/wasm.bin` 是从 App 产物提取的签名模块，
    **不随插件发布**；换机器需重新提取（`node research/wasm-extract.mjs`）。
-7. **`Cosy-Version` 动态解析**：优先读 App 产物里 SDK 的 `COSY_VERSION`
+6. **`Cosy-Version` 动态解析**：优先读 App 产物里 SDK 的 `COSY_VERSION`
    常量（实测 `1.1.32`），失败时回退安装目录版本号，最后回退常量。
    来源会记在 `signerSession.describe().cosyVersion.source` 里。
-8. **Linux 需要 python3 + python3-gi**：读取系统密钥环走 Gio 的 D-Bus，
+7. **Linux 需要 python3 + python3-gi**：读取系统密钥环走 Gio 的 D-Bus，
    不引入 npm 依赖（保持零运行时依赖）。
+
+### 图片与工具调用：均已实测可用
+
+早期版本把这两项列为「未支持」，那是过时结论。2026-11-16 在本机
+（App 1.3.1 / Ubuntu 26.04）做了端到端实测，两项都通过。
+
+**图片输入** — 发送一张 64×64 的 PNG（红色背景、中央白色方块），
+模型回答「这张图的主色调是红色，中间有一个白色的正方形」。
+
+链路：DSH 附件服务 → pi-ai 的 `prepareRequestImages` 把附件解成 base64 →
+shim 的 `extractImageUrl` 转 data URL → `chat_context.imageUrls` 与多模态
+`content` 数组双写（见「图片输入」一节：两者缺一，上游就不认图）。
+
+前置条件是附件服务可用（`ctx.get('attachments')`）。不可用时插件**不会**
+声明 image 模态，pi-ai 会在发图前就拒绝——而不是发出去再失败。
+
+**工具调用** — `tools` 透传与 `tool_calls` 协议转换均已实现
+（`toQwenWorkMessages` 保留 assistant 的 tool_calls，`chat-shim` 处理
+tool 角色消息与 `tool_call_id`）。
 
 ## Linux 凭据解密（实测于 App 1.3.1 / Ubuntu 26.04）
 
