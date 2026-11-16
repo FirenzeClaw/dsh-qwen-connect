@@ -26,7 +26,9 @@
 
 ## 配置项
 
-配置表单出现在 **设置 → 插件 → dsh-qwen-connect → 配置**。
+配置表单出现在 **侧边栏「插件」面板 → 打开 `dsh-qwen-connect` 这一行 → 配置**
+（它是 `plugins.row.config` 槽位的 keyed 条目 `<包名>#<行 id>`，即
+`dsh-qwen-connect#llm-qwenwork`）。注意「插件」是顶层面板，不在「设置」里面。
 
 | 字段 | 默认值 | 说明 |
 |---|---|---|
