@@ -10,7 +10,8 @@
 | Provider 注册（模型出现在 DSH 模型选择器，名称含倍率） | ✅ |
 | 设置卡片：账号 / 积分 / 套餐 / 模型列表（含配额进度条） | ✅ |
 | 输入框积分胶囊（仅在选中千问模型时出现） | ✅ |
-| 设置页配置项（模型白名单 / 是否拉上游目录 / 是否显示积分） | ✅ |
+| 设置页配置项（模型白名单 / 积分显示 / 思考深度开关） | ✅ |
+| **思考深度**（低→最高 5 档，`reasoning_effort` 真实透传上游） | ✅ |
 | 模型目录热更新（改配置或上游变化无需重启 DSH） | ✅ |
 | 凭据解密（Chromium v10/v11 + Windows DPAPI / Linux Secret Service） | ✅ |
 | 账号 / 额度 / 套餐 REST 查询 | ✅ |
@@ -25,21 +26,91 @@
 
 ## 配置项
 
-插件的配置面来自 `lib/index.js` 导出的 `Config` schema（schemastery），
-DSH 的设置服务据此自动生成表单——出现在 **设置 → 模型 → QwenWork 卡片**。
+配置表单出现在 **设置 → 插件 → dsh-qwen-connect → 配置**。
 
 | 字段 | 默认值 | 说明 |
 |---|---|---|
 | `allowedModelIds` | `['deepseek-flash']` | 模型白名单。留空表示不限制（显示上游全部模型）。 |
 | `refreshCatalogOnStart` | `true` | 启动时从上游拉取模型目录。关闭后只使用内置目录。 |
 | `showCredits` | `true` | 在输入框右侧显示千问剩余积分。 |
+| `thinkingEnabled` | `true` | 思考总开关。关闭后一律按「不思考」发出。 |
+| `thinkingLow` … `thinkingMax` | 各自 `true` | 哪几档出现在模型选择器的「思考深度」里。 |
 
-两点实现说明：
+### 表单由谁画
+
+⚠️ 更正一条曾经的错误结论：**导出 `Config` 不会自动生成表单**。
+DSH 用 `Config` 校验 `config`，而表单本身来自客户端注册的
+`plugins.row.config` / `plugins.bundle.config` 槽位——owner 只把
+`form.state`（已接受的值 + revision + 可写性）和 `form.mutate`（带版本围栏
+的写入）交过来，控件要自己画。不注册这两个槽位，插件页面上就什么都不会出现。
+
+槽位的 key 是 **`<包名>#<行 id>`**，而本插件的包名（`dsh-qwen-connect`）与
+patch 里的行 id（`llm-qwenwork`）**不相等**，两者还可能带 `include:` 组合层
+前缀。因此 `lib/client.js` 把各种组合都注册了一遍：keyed 槽位里没被
+dispatch 的键不渲染任何东西，多注册没有代价；漏注册才会让页面空白且不报错。
+
+### 实现说明
 
 - **`showCredits=false` 落在数据层**：状态路由直接不返回额度字段，而不是
   让客户端拿到数据后再藏起来。
-- **改配置不需要重启**：provider 的 `models` 是 getter，且目录变化后经
-  `registerAdapter().replace()` 触发 `llm/adapters-updated`，客户端随即重拉。
+- **改配置不需要重启**：provider 的 `models` 与思考档位都是 getter，
+  目录变化后经 `registerAdapter().replace()` 触发 `llm/adapters-updated`，
+  客户端随即重拉。
+
+## 思考深度（reasoning effort）
+
+### 上游支持哪几档
+
+`deepseek-flash` 属于 `is_reasoning: true` 且 `is_vl: true` 的模型。上游目录
+里所有 13 个模型的 `thinking_config` 字段都是 `null`（即目录本身**没有**声明
+思考档位），但这不代表上游不认这个字段——实测它认。
+
+用同一道需要分步推理的题目、5 档轮转各测 3 次，思考链长度如下
+（`deepseek-flash`，`research` 探针见 `tools/` 之外的本机记录）：
+
+| 档位 | 思考链长度均值 | 结论 |
+|---|---|---|
+| `low` | 3.1 K 字 | 可用 |
+| `medium` | 3.8 K 字 | 可用 |
+| `high` | 5.1 K 字 | 可用 |
+| `xhigh` | 9.3 K 字 | 可用，明显更长 |
+| `max` | 7.8 K 字 | **可用**（上游接受，且长度高于 high） |
+
+所以：**千问的 DeepSeek 支持 `max`**，`xhigh` 也给，单调梯度真实存在。
+
+### DSH 与上游的两套词表
+
+| pi-ai 档位 | 上游 `reasoning_effort` | 备注 |
+|---|---|---|
+| `off` | `none` | 关闭 |
+| `minimal` | —— | 上游没有这一档，映射为 `low` |
+| `low` / `medium` / `high` / `xhigh` / `max` | 同名 | |
+
+`off` 与 `minimal` 在 `lib/models.js` 的 `thinkingLevelMap` 里恒为 `null`：
+pi-ai 的信道里「选 off」和「什么都不选」发出去**完全相同**，一旦暴露 `off`，
+任何没动过选择器的会话都会变成关闭思考——那是实现细节泄漏成默认行为。
+关闭思考走配置里的总开关（显式、不会误伤）。
+
+### 请求侧要改三处，少一处就无效
+
+按上游 SDK 的语义（`qoder-worker-runtime.obf.mjs` 偏移 8817042 附近），
+关闭思考时三件事**同时**发生；只改 `parameters` 而不动
+`model_config.is_reasoning` 时，实测看不出档位差异：
+
+```js
+parameters.reasoning_effort = 'none'
+parameters.enable_thinking  = false
+model_config.is_reasoning   = false     // 关键：少这行就等于没关
+```
+
+`lib/signer-session.js` 的 `buildInferBody` 复刻了这三点。
+**不发 `reasoning_effort` 不等于关闭**——那表示「用户没选档位」，上游用自己的默认档。
+
+### 曾经的缺陷
+
+pi-ai 一直在请求体顶层发 `reasoning_effort`，而 `lib/chat-shim.js` 整条丢弃：
+表现为「模型选择器里能选档位，但选什么都一样」。修复后 shim 从
+`body.reasoning_effort` 读取并透传。
 
 ## 图片输入（视觉）
 
