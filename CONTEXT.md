@@ -1,0 +1,52 @@
+# 架构深化设计共识（7 个候选）
+
+来源：`/tmp/architecture-review-20261116.html`（2026-11-16 架构审查报告）。
+本文件仅记录**已确认的事实与约束**，供后续 brainstorming 与 spec 使用。
+
+## 已核实的上游事实（2026-11-16 实测）
+
+调用 `/api/v2/model/list`（签名后 HTTP 200），qwork 分组 13 个模型：
+
+| 字段 | 取值集合 | 含义 |
+|---|---|---|
+| `is_reasoning` | `true`（全部 13 个） | 没有区分度 |
+| `is_vl` | `true`（全部 13 个） | 没有区分度 |
+| `thinking_config` | `null`（全部 13 个） | 目录**不声明**档位 |
+| `enable` | `true` | |
+| `max_input_tokens` | `1000000` | |
+
+后果：`lib/chat-shim.js:482` 的 `isReasoning: true` 硬编码**今天恰好正确**，属于结构欠账
+而非进行中的缺陷。`lib/model-catalog.js:84` 只取 `is_vl`、不取 `is_reasoning`，因此
+模型形状里没有该字段可查——上游一旦差异化，会照发 `true` 且无测试可发现。
+
+## 已核实的历史缺陷（可追溯到具体提交）
+
+| 缺陷 | 根因 | 修复提交 |
+|---|---|---|
+| 卡片写「仅文本」而选择器声明 image | 同一信息两个判据：`describeModel()` 自判、`toPiModel()` 另判 | `7703115` |
+| 配置项点了没反应 | `Config` 缺 `.volatile()`；且 volatile 字段送来只读引用未被解开 | `14b0d48` |
+| 配置表单永远「正在读取配置…」 | `plugins.bundle.config` 不传 `form`，`loading` 分支无限转 | `7c50fe5` |
+| 档位清单与 lib 层漂移 | `client.js` 手抄 `THINKING_LEVELS` | 护栏 `a1e8d82`（结构未解） |
+| `client-render-check` 长期静默跳过 | 依赖路径写死 Windows `%APPDATA%` | `126ea9d` |
+
+## 已核实的当前状态
+
+- 插件运行时状态是 **7 个模块级 `let`**：`lib/index.js:395-401`（shim 三件套）、`:414,417`（`activeModels` / `catalogSource`）、`:427,438`（`adapterRegistration` / `currentConfig`）。
+- `stopChatShim()` 定义在 `lib/index.js:663`，在 `lib/` 内**没有调用者**；运行期禁用插件后，监听环回端口的 HTTP server 与共享密钥存活到进程退出。
+- Cordis 的 `update()`（`node_modules/@deepseek-ai/cordis/lib/index.js:1424`）会走 `restart()` → dispose → 重新 apply。
+- 重试叠两层：`lib/index.js:321` 用 `resolveRetryPolicy(undefined)` → `maxRetries: 5`；`lib/chat-shim.js:74` `UPSTREAM_MAX_ATTEMPTS = 3`。`dsh-base/cordis.patch.yml:99` 默认启用 `llm-retry`；`dsh-llm-pi-ai/lib/index.js:1454` 把含 `5\d\d` 的错误消息归为可重试的 `SERVER`。
+- `lib/auth-api.js` 导出 43 个名字，唯一消费者是 `test/unit/index-exports.test.mjs`。
+- `.portable-check/dsh-qwen-connect/` 有 36 个受跟踪文件（716K），`lib/index.js`、`lib/chat-shim.js`、`lib/client.js` 三份与源码**已不同**。
+- `lib/chat-shim.js` 的 `handleChatShim` 376 行、35 个局部声明；`test/unit/stream-robustness.test.mjs` 91 条测试每条都起假上游 + shim 两个 server。
+- 三个客户端工具合计 1382 行，各自重写「捕获 `__ModuleLoader__.load` + `fakeRequire` + ctx 桩」；`tools/render-deps.mjs` 是唯一已共享的部分。
+
+## 约束与惯例（来自用户与本仓库）
+
+- 零运行时依赖（`react` / `jsdom` 只作可选检查依赖，不入 `package.json`）。
+- 不改 profile 的 `cordis.patch.yml`（插件自带 patch 有 `insert llm-qwenwork`，重复会导致 duplicate loader entry id 使 DSH 启动失败）。
+- **DSH 由用户自己重启**，代理不代为执行。
+- 破坏性 git 操作前确认。
+- 临时文件放 `/home/firenzeclaw/tmp/`。
+- 提交作者 `huxin0426 <huxin0426@gmail.com>`，不 push。
+- 断言针对不变量，不针对具体模型 id。
+- 回复中文；中文注释；注释解释 why。
