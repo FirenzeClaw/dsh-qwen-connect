@@ -1229,6 +1229,40 @@ test('模型描述文案与能力声明一致', () => {
   }
 });
 
+test('卡片模态文案跟随 supportsImages，不得写死', () => {
+  // 真实故障：describeModel 曾把「仅文本」写死，而 toPiModel 会按附件服务
+  // 是否可用动态声明 image。于是卡片说不能收图、选择器实际能收——同一条
+  // 信息在两个界面自相矛盾。这条护栏锁住「跟随」而非某个固定词。
+  for (const supportsImages of [true, false]) {
+    const expected = supportsImages ? '文本+图片' : '仅文本';
+    const forbidden = supportsImages ? '仅文本' : '文本+图片';
+    for (const card of catalogForCard({ supportsImages })) {
+      assert.ok(
+        card.description.includes(expected),
+        `${card.id} supportsImages=${supportsImages} 时描述应含「${expected}」，实际：${card.description}`,
+      );
+      assert.ok(
+        !card.description.includes(forbidden),
+        `${card.id} supportsImages=${supportsImages} 时描述不得含「${forbidden}」`,
+      );
+    }
+  }
+});
+
+test('卡片模态文案与 toPiModel 的实际模态声明一致', () => {
+  // 两个界面必须给出同一结论：这是本项目反复强调的「声明与实现一致」。
+  for (const supportsImages of [true, false]) {
+    const declared = toPiModel(FALLBACK_QWENWORK_MODELS[0], 'http://x/y', { supportsImages });
+    const expectsImage = declared.input.includes('image');
+    const card = catalogForCard({ supportsImages })[0];
+    assert.equal(
+      card.description.includes('文本+图片'),
+      expectsImage,
+      `模态声明（${declared.input.join('+')}）与卡片文案（${card.description}）不一致`,
+    );
+  }
+});
+
 // ---------------------------------------------------------------------------
 // 倍率映射到模型选择器（显示名）
 // ---------------------------------------------------------------------------
