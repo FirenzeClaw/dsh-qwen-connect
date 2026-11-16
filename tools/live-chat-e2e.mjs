@@ -61,6 +61,13 @@ assert.equal(calls.adapters.length, 1, 'apply 必须注册 adapter');
 const adapter = calls.adapters[0].adapter;
 say('✔ apply() 注册了 adapter');
 
+// 探测用模型：取当前目录里的第一个，不硬编码。
+// 插件按白名单收窄模型（默认 deepseek-flash），写死 `pro` 会报 UNKNOWN_MODEL。
+const probed = await adapter.listModels('qwenwork');
+assert.ok(probed.length > 0, '目录里必须至少有一个模型');
+const MODEL = probed[0].id;
+say(`  探测模型: ${MODEL}`);
+
 // 等 shim 就绪（apply 内部异步启动）
 let baseUrl = null;
 for (let i = 0; i < 60; i += 1) {
@@ -97,7 +104,7 @@ say('\n=== 通过 DSH adapter 发起真实对话 ===');
  * 因此必须按 type 分流，绝不能把两者都当正文累加。
  */
 async function runTurn(messages, label) {
-  const call = await adapter.prepareCall('qwenwork', 'pro');
+  const call = await adapter.prepareCall('qwenwork', MODEL);
 
   // 单轮上限：上游模型偶发长输出（实测见过 106 帧），不设上限会让整条
   // 验证在 CI 里无限等待。超时按「验证失败」处理并报告，不静默吞掉。
@@ -109,7 +116,7 @@ async function runTurn(messages, label) {
   let reasoning = '';
   let frames = 0;
   try {
-    const stream = call.stream({ provider: 'qwenwork', model: 'pro', messages, signal: controller.signal });
+    const stream = call.stream({ provider: 'qwenwork', model: MODEL, messages, signal: controller.signal });
     for await (const event of stream) {
       frames += 1;
       const t = event?.type;

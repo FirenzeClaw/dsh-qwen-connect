@@ -107,11 +107,16 @@ function makeCtx() {
   // 注意：`PiAiAdapter.listModels()` 返回的是**给模型选择器用的展示形状**
   // （provider / id / name / inputModalities），`api` 与 `baseUrl` 属于适配器
   // 内部构造、不对外暴露。因此这里只断言 DSH 契约里确实存在的字段。
+  //
+  // ⚠️ 数量与具体 id 的断言已收窄：插件现在按白名单只放行
+  // `DEFAULT_ALLOWED_MODEL_IDS`（默认 deepseek-flash）。原先断言「至少 2 个」
+  // 且「必须含 flash 与 pro」，在白名单生效后会误报失败。这里改为断言
+  // 「非空且全部属于 provider」，具体 id 交给 model-catalog.test.mjs 锁。
   const models = await adapter.listModels('qwenwork');
-  assert.ok(Array.isArray(models) && models.length >= 2, 'listModels 必须返回模型');
+  assert.ok(Array.isArray(models) && models.length >= 1, 'listModels 必须返回至少一个模型');
   const ids = models.map((m) => m.id);
   say(`✔ listModels: [${ids}]`);
-  assert.ok(ids.includes('flash') && ids.includes('pro'));
+  assert.ok(ids.includes('deepseek-flash'), '默认白名单的模型必须出现在选择器里');
   for (const m of models) {
     assert.equal(m.provider, 'qwenwork', '每个模型都要归属本 provider');
     assert.ok(typeof m.id === 'string' && m.id !== '', '模型必须有非空 id');
@@ -142,10 +147,14 @@ function makeCtx() {
   //      ≈1.2M tokens 上游仍接受、≈1.5M 才拒 → 真实上限 1.2M~1.5M，
   //      「1M」（App 日志的保守标注）才是正确声明。
   // 不变量：contextWindow === MAX_INPUT_TOKENS === 请求里的 max_input_tokens。
-  const resolved = await adapter.resolveModel('qwenwork', 'flash');
-  assert.equal(resolved.id, 'flash');
+  //
+  // ⚠️ 模型 id 用当前目录里的第一个，不再硬编码 `flash`：插件已按白名单收窄，
+  // 写死某个 id 会在白名单变化后失效（实测报 UNKNOWN_MODEL）。
+  const probeModel = ids[0];
+  const resolved = await adapter.resolveModel('qwenwork', probeModel);
+  assert.equal(resolved.id, probeModel);
   assert.equal(resolved.context?.contextWindow, 1_000_000, 'contextWindow 必须与 MAX_INPUT_TOKENS(1M) 一致');
-  say(`✔ resolveModel(flash): contextWindow=${resolved.context.contextWindow}`);
+  say(`✔ resolveModel(${probeModel}): contextWindow=${resolved.context.contextWindow}`);
 }
 
 // ---------------------------------------------------------------- 降级路径
