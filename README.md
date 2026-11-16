@@ -51,6 +51,7 @@ lib/index.js            host 侧入口：注册 qwenwork provider + 挂载状态
 lib/client.js           浏览器侧入口：设置卡片（__ModuleLoader__.load 包装）
 lib/web-status.js       状态路由：loopback-only + JWT 脱敏，汇总卡片数据
 lib/credentials-seam.js 与凭据层的唯一接缝（不重复实现解密）
+lib/secret-service.js   Linux：从系统密钥环保留的 Safe Storage 口令
 lib/signer-session.js   WASM 签名会话 + 请求体构造
 lib/chat-shim.js        环回聊天 shim：OpenAI ↔ QwenWork 协议转换 + 工具调用 + token 统计
 lib/signer-shim.js      chat-shim 的稳定转发层（集成方从此导入）
@@ -144,7 +145,7 @@ Copy-Item "$w\_backup-qwen-connect-20260911-141226\cordis.patch.yml" "$w\cordis.
 
 ## 已知限制
 
-1. **仅 Windows**：凭据解密走 Windows DPAPI。
+1. **平台**：Windows（DPAPI）与 Linux（Secret Service）均已支持；macOS 未实现。
 2. **工具调用 / 视觉输入未支持**：文本流式对话与多轮已打通；但
    `tool_calls` 未做协议转换，图片输入会被 shim 丢弃（`toQwenWorkMessages()`
    只保留 `type: 'text'` 块）。**不要依赖这两项能力。**
@@ -158,6 +159,32 @@ Copy-Item "$w\_backup-qwen-connect-20260911-141226\cordis.patch.yml" "$w\cordis.
 7. **`Cosy-Version` 动态解析**：优先读 App 产物里 SDK 的 `COSY_VERSION`
    常量（实测 `1.1.32`），失败时回退安装目录版本号，最后回退常量。
    来源会记在 `signerSession.describe().cosyVersion.source` 里。
+8. **Linux 需要 python3 + python3-gi**：读取系统密钥环走 Gio 的 D-Bus，
+   不引入 npm 依赖（保持零运行时依赖）。
+
+## Linux 凭据解密（实测于 App 1.3.1 / Ubuntu 26.04）
+
+Windows 用 DPAPI 解 `Local State` 里的主密钥；Linux 没有 DPAPI，Electron 改把
+口令交给**系统密钥环**（`org.freedesktop.secrets`），凭据文件则是 `v11` 前缀。
+
+实测链路（`lib/secret-service.js` + `lib/credentials.js`）：
+
+```
+auth-v2.dat (v11)  ← AES-128-CBC, IV = 16 个空格
+                 ↑ key = PBKDF2-HMAC-SHA1(口令, "saltysalt", 1 轮, 16 字节)
+口令 ← Secret Service 条目 {'application': 'QwenWorkCN',
+                          'xdg:schema': 'chrome_libsecret_os_crypt_password_v2'}
+```
+
+**两条与上游文档不符的实测结论**（以实测为准）：
+
+1. Chromium 的 `os_crypt_linux.cc` 在 v11 用 AES-128-**GCM**（nonce 前置 12 字节），
+   但本机 App 1.3.1 的产物**不是**该形态——GCM 的全部参数组合都认证失败，
+   只有 CBC + 空格 IV 能解出合法 JSON。因此 `decryptV11` 按「先 GCM 后 CBC」尝试。
+2. App 的启动参数含 `--password-store=gnome-libsecret`，所以口令在
+   **GNOME Keyring / Secret Service**，不在 KWallet——尽管本机运行的是 KDE。
+
+回写同样保持 v11/CBC，否则 App 下次启动会读不出登录态。
 
 ## 聊天接入架构（阶段 A-2）
 
