@@ -110,9 +110,14 @@ try {
   process.exit(1);
 }
 
-// 现在会注册两处：设置卡片（keyed provider-card）+ 输入框积分胶囊（list）。
-if (slotsRegistered.length !== 2) {
-  console.error(`❌ 期望注册 2 个槽位（卡片 + 胶囊），实际 ${slotsRegistered.length}`);
+// 现在会注册多处：设置卡片（keyed）+ 输入框积分胶囊（list）+ 配置表单
+// （plugins.row.config / plugins.bundle.config 各自的多个包名/行 id 组合）。
+// 这里只要求「至少含卡片」，不锁总数——配置页的 key 组合数会随前缀形态变化。
+const cardEntryCount = slotsRegistered.filter(
+  (entry) => entry.meta.name === 'settings.models.provider-card',
+).length;
+if (cardEntryCount !== 1) {
+  console.error(`❌ 期望注册 1 个设置卡片，实际 ${cardEntryCount}`);
   process.exit(1);
 }
 

@@ -124,13 +124,28 @@ const ctx = {
 
 mod.apply(ctx);
 
-assert.equal(registrations.length, 2, '必须注册两个 slot：设置卡片 + 输入框积分胶囊');
+/**
+ * 注册数量：卡片 1 + 胶囊 1 + 配置页（包名 2 × 行 id 2 = 4 行配置 + 2 包配置）。
+ *
+ * 配置页之所以注册多个 key，是因为 key 是 `<包名>#<行 id>`，而我们的包名
+ * （`dsh-qwen-connect`）与 patch 里的行 id（`llm-qwenwork`）**不相等**，
+ * 且两者都可能带 `include:` 组合层前缀。keyed 槽位里没被 dispatch 的键
+ * 不会渲染任何东西，多注册没有代价；漏注册才会让配置页一片空白且不报错。
+ */
+assert.equal(
+  registrations.length,
+  8,
+  `期望 8 个注册（卡片 1 + 胶囊 1 + 行配置 4 + 包配置 2），实际 ${registrations.length}`,
+);
 
-/** 按槽位名取注册项，缺失时直接失败并说明期望。 */
+/** 按槽位名取全部注册项。 */
+const regsOf = (slotName) => registrations.filter((r) => r.descriptor.name === slotName);
+
+/** 按槽位名取唯一注册项，缺失或多于一个都直接失败。 */
 const regOf = (slotName) => {
-  const found = registrations.find((r) => r.descriptor.name === slotName);
-  assert.ok(found !== undefined, `必须注册到槽位 ${slotName}`);
-  return found;
+  const found = regsOf(slotName);
+  assert.equal(found.length, 1, `期望 ${slotName} 只注册一处，实际 ${found.length} 处`);
+  return found[0];
 };
 
 // ---- 设置卡片：provider 卡片扩展区 ---------------------------------------
@@ -166,6 +181,36 @@ for (const localeId of ['zh', 'en']) {
   }
 }
 line('✔ 胶囊文案 pill.title / pill.credits 在 zh、en 中都存在');
+
+// ---- 插件配置页：`plugins.row.config` / `plugins.bundle.config` -----------
+//
+// 这两个槽位是配置表单唯一的入口。不注册它们，DSH 只会校验 Config、
+// 页面上什么控件都不会出现（曾经误以为「导出 Config 就会自动生成表单」）。
+const rowConfigs = regsOf('plugins.row.config');
+const bundleConfigs = regsOf('plugins.bundle.config');
+assert.ok(rowConfigs.length > 0, '必须注册 plugins.row.config（插件行详情页的配置表单）');
+assert.ok(bundleConfigs.length > 0, '必须注册 plugins.bundle.config（插件包页面上的配置表单）');
+
+// key 形态：行配置必须含 `#`，且左右两侧都不能是空串
+for (const entry of rowConfigs) {
+  const key = entry.descriptor.key;
+  assert.equal(typeof key, 'string', 'keyed 槽位必须给 key');
+  assert.ok(key.includes('#'), `行配置的 key 必须是「包名#行 id」，实际 ${key}`);
+  const [bundle, rowId] = key.split('#');
+  assert.ok(bundle !== '' && rowId !== '', `行配置 key 两侧都不能为空：${key}`);
+  assert.equal(typeof entry.component, 'function', '行配置第二参数必须是组件函数');
+}
+// 包名与行 id 不相等是本次的真实形态，必须两种都覆盖到
+const rowKeys = rowConfigs.map((entry) => entry.descriptor.key);
+assert.ok(
+  rowKeys.includes('dsh-qwen-connect#llm-qwenwork'),
+  `行配置必须覆盖「包名#行 id」这一真实形态，实际：${rowKeys.join(', ')}`,
+);
+assert.ok(
+  rowKeys.some((key) => key.includes('include:')),
+  '行配置要覆盖 include: 前缀形态（profile 组合层会加这个前缀）',
+);
+line(`✔ 配置表单: 行配置 ${rowConfigs.length} 个 key、包配置 ${bundleConfigs.length} 个`);
 
 // ---- 积分胶囊的归属判定：只在选中千问模型时渲染 ---------------------------
 /**

@@ -387,6 +387,193 @@ line('\n--- 设置卡片 ---');
   }
 }
 
+// ---- 插件配置表单：真挂载 + 真实点击 --------------------------------------
+//
+// 配置页是本次要交付的能力，必须验证到「点了开关，mutate 收到正确的
+// 字段与值」这一层——只断言「注册了槽位」证明不了表单能用。
+line('\n--- 插件配置表单 ---');
+{
+  const rowReg = registrations.find(
+    (r) => r.descriptor.name === 'plugins.row.config'
+      && r.descriptor.key === 'dsh-qwen-connect#llm-qwenwork',
+  );
+  if (rowReg === undefined) {
+    fail('未注册行配置表单（plugins.row.config 的「包名#行 id」键）');
+  } else {
+    /**
+     * 挂载表单并返回 { html, mutations }。
+     *
+     * @param {object} value 已接受的配置值
+     * @param {{ writable?: boolean, status?: string }} [opts]
+     */
+    const mountForm = async (value, opts = {}) => {
+      const mutations = [];
+      const container = dom.window.document.createElement('div');
+      dom.window.document.body.appendChild(container);
+      const form = {
+        state: {
+          status: opts.status ?? 'ready',
+          value,
+          base: undefined,
+          user: undefined,
+          revision: opts.revision ?? 7,
+          writable: opts.writable !== false,
+        },
+        mutate: async (ops, revision) => {
+          mutations.push({ ops, revision });
+          return true;
+        },
+      };
+      const root = createRoot(container);
+      let threw = null;
+      try {
+        await react.act(async () => {
+          root.render(
+            react.createElement(rowReg.component, { t, form, view: 'page' }),
+          );
+        });
+      } catch (error) {
+        threw = error;
+      }
+      return {
+        html: container.innerHTML,
+        mutations,
+        threw,
+        async click(labelText) {
+          // 按 aria-label / 文案找到 checkbox 并触发 change
+          const inputs = [...container.querySelectorAll('input[type="checkbox"]')];
+          const index = inputs.findIndex((input) => {
+            const row = input.closest('label');
+            return row !== null && row.textContent.includes(labelText);
+          });
+          if (index < 0) throw new Error(`未找到开关「${labelText}」`);
+          await react.act(async () => {
+            inputs[index].click();
+          });
+        },
+        async unmount() {
+          await react.act(async () => {
+            root.unmount();
+          });
+          container.remove();
+        },
+      };
+    };
+
+    const FULL = {
+      allowedModelIds: ['deepseek-flash'],
+      refreshCatalogOnStart: true,
+      showCredits: true,
+      thinkingEnabled: true,
+      thinkingLow: true,
+      thinkingMedium: true,
+      thinkingHigh: true,
+      thinkingXhigh: true,
+      thinkingMax: true,
+    };
+
+    // ① 渲染出思考深度分区与全部档位
+    {
+      const view = await mountForm(FULL);
+      if (view.threw !== null) {
+        fail(`配置表单渲染抛异常：${view.threw.message}`);
+      } else {
+        const missing = ['思考深度', '允许模型思考', '最高（max）', '超高（xhigh）', '模型白名单']
+          .filter((needle) => !view.html.includes(needle));
+        if (missing.length > 0) fail(`配置表单缺少内容：${missing.join('、')}`);
+        else pass(`配置表单渲染成功（${view.html.length} 字节，含 5 个档位）`);
+      }
+      await view.unmount();
+    }
+
+    // ② 点「允许模型思考」开关 → mutate 收到 thinkingEnabled=false
+    {
+      const view = await mountForm(FULL);
+      try {
+        await view.click('允许模型思考');
+        const last = view.mutations.at(-1);
+        if (last === undefined) fail('点击开关后没有发起任何写入');
+        else if (last.ops[0]?.path?.[0] !== 'thinkingEnabled' || last.ops[0]?.value !== false) {
+          fail(`开关写入内容不对：${JSON.stringify(last.ops)}`);
+        } else if (last.revision !== 7) {
+          fail(`写入没有带上读取时的 revision（并发围栏），实际 ${last.revision}`);
+        } else pass('点「允许模型思考」→ mutate(thinkingEnabled=false, revision=7)');
+      } catch (error) {
+        fail(`点击开关失败：${error.message}`);
+      }
+      await view.unmount();
+    }
+
+    // ③ 关掉某一档 → mutate 收到该档的字段名
+    {
+      const view = await mountForm(FULL);
+      try {
+        await view.click('最高（max）');
+        const last = view.mutations.at(-1);
+        if (last === undefined) fail('点击档位后没有发起写入');
+        else if (last.ops[0]?.path?.[0] !== 'thinkingMax' || last.ops[0]?.value !== false) {
+          fail(`档位写入内容不对：${JSON.stringify(last.ops)}`);
+        } else pass('点「最高（max）」→ mutate(thinkingMax=false)');
+      } catch (error) {
+        fail(`点击档位失败：${error.message}`);
+      }
+      await view.unmount();
+    }
+
+    // ④ 总开关关闭时，档位区不出现（避免用户以为还能选）
+    {
+      const view = await mountForm({ ...FULL, thinkingEnabled: false });
+      if (view.html.includes('在模型选择器里提供以下档位')) {
+        fail('总开关关闭时不应显示档位勾选区');
+      } else if (!view.html.includes('允许模型思考')) {
+        fail('总开关关闭时仍应显示总开关本身');
+      } else {
+        pass('总开关关闭：档位勾选区隐藏，总开关仍可见');
+      }
+      await view.unmount();
+    }
+
+    // ⑤ 只读时控件禁用，点也不写入
+    {
+      const view = await mountForm(FULL, { writable: false });
+      let wrote = false;
+      try {
+        await view.click('允许模型思考');
+        wrote = view.mutations.length > 0;
+      } catch {
+        /* 禁用时点不动也接受 */
+      }
+      if (wrote) fail('只读状态下不应写入');
+      else if (!view.html.includes('只读')) fail('只读时应说明原因');
+      else pass('只读：控件不可写，且说明原因');
+      await view.unmount();
+    }
+
+    // ⑥ summary 视图给一行摘要（插件列表页用）
+    {
+      const container = dom.window.document.createElement('div');
+      dom.window.document.body.appendChild(container);
+      const root = createRoot(container);
+      await react.act(async () => {
+        root.render(
+          react.createElement(rowReg.component, {
+            t,
+            view: 'summary',
+            form: { state: { status: 'ready', value: FULL, revision: 1, writable: true }, mutate: async () => true },
+          }),
+        );
+      });
+      const summary = container.textContent;
+      if (!summary.includes('思考深度')) fail(`summary 未给出摘要：${summary}`);
+      else pass(`summary 视图: ${summary.slice(0, 40)}`);
+      await react.act(async () => {
+        root.unmount();
+      });
+      container.remove();
+    }
+  }
+}
+
 line('');
 if (failures === 0) {
   line('全部检查通过。');
