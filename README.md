@@ -18,7 +18,7 @@
 | **token 统计**（上游 `raw_usage` → OpenAI `usage`） | ✅ |
 | **上游重试**（限流 / 网关瞬时故障，最多 3 次） | ✅ |
 | **请求方鉴别**（shim 共享密钥 + 常量时间比较） | ✅ |
-| 动态模型目录 | ❌ 静态内置（`/api/v2/model/list` 需签名） |
+| **动态模型目录**（签名请求 `/api/v2/model/list` + 白名单过滤） | ✅ |
 
 ## 图片输入（视觉）
 
@@ -148,8 +148,9 @@ Copy-Item "$w\_backup-qwen-connect-20260911-141226\cordis.patch.yml" "$w\cordis.
 1. **平台**：Windows（DPAPI）与 Linux（Secret Service）均已支持；macOS 未实现。
 2. **DPAPI 依赖 PowerShell 兜底**：本机未装 `koffi`/`ffi-napi`，走 PowerShell
    子进程（每进程约几十毫秒）。
-3. **模型目录是静态的**：`/api/v2/model/list` 需要 WASM 签名（403），
-   目前用内置的三模型目录，不动态拉取。
+3. **默认只放行一个模型**：`DEFAULT_ALLOWED_MODEL_IDS = ['deepseek-flash']`。
+   企业版上游有 13 个模型（倍率 0.1~2.4），全量暴露容易误选到最贵的那个，
+   因此默认收敛到一个。需要别的模型时改 `lib/model-catalog.js` 的白名单。
 4. **`quota.total` 对 Free 套餐为 null**：卡片按「未提供」处理，不显示 0%。
 5. **签名依赖官方 WASM**：`research/wasm.bin` 是从 App 产物提取的签名模块，
    **不随插件发布**；换机器需重新提取（`node research/wasm-extract.mjs`）。
@@ -158,6 +159,43 @@ Copy-Item "$w\_backup-qwen-connect-20260911-141226\cordis.patch.yml" "$w\cordis.
    来源会记在 `signerSession.describe().cosyVersion.source` 里。
 7. **Linux 需要 python3 + python3-gi**：读取系统密钥环走 Gio 的 D-Bus，
    不引入 npm 依赖（保持零运行时依赖）。
+
+## 模型目录：动态拉取 + 白名单
+
+模型目录**不再静态内置**。早期结论说 `/api/v2/model/list`「需要 WASM 签名（403），
+只能静态内置」——那只对**未签名**请求成立。带上签名会话后该端点返回
+**HTTP 200** 和完整 catalog（含 `is_vl` / `price_factor` / `context_config`）。
+
+现在的流程（`lib/model-catalog.js`）：
+
+```
+启动 → 先用「静态目录 ∩ 白名单」顶上（选择器立刻有内容）
+     → 后台签名请求 /api/v2/model/list
+     → 解析 qwork 分组 → 按白名单过滤 → 原地替换 activeModels
+```
+
+三条降级路径，**任何一条都不会让模型选择器变空**：
+
+| 情况 | 结果 | source |
+|---|---|---|
+| 上游可用且白名单命中 | 上游模型（默认只有 `deepseek-flash`） | `upstream` |
+| 上游失败 / 离线 / 无签名会话 | 静态目录 ∩ 白名单 | `fallback` |
+| 白名单与静态目录无交集 | 不过滤的静态目录 | `fallback-unfiltered` |
+
+最后一条是刻意的：白名单配错（比如上游把模型改名了）时，宁可多显示一个
+可用模型，也不要给用户一个空列表——那会连原本能用的对话能力都失去。
+
+实测（App 1.3.1 / 企业基础版）：
+
+```
+source = upstream | count = 1
+  deepseek-flash | DeepSeek-V4.1-Flash | x0.1 | vl true | ctx 1000000
+```
+
+诊断：`describeModelCatalog()` 返回 `{ source, models }`。
+
+改白名单：编辑 `lib/model-catalog.js` 的 `DEFAULT_ALLOWED_MODEL_IDS`，
+或调用 `resolveModelCatalog({ allowed: [...] })` 显式传入（空数组=不限制）。
 
 ### 图片与工具调用：均已实测可用
 
