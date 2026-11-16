@@ -16,8 +16,9 @@ import assert from 'node:assert/strict';
 
 const say = (s) => process.stdout.write(`${s}\n`);
 
-// 从 junction 视角加载，等价于 DSH 的加载方式
-const PLUGIN_URL = 'file:///C:/Users/HX/AppData/Roaming/dsh-desktop/harness/profiles/web/node_modules/dsh-qwen-connect/lib/index.js';
+// 从 junction 视角加载，等价于 DSH 的加载方式。
+// 用相对路径而不是写死的绝对路径：换机器/换 profile 时无需改脚本。
+const PLUGIN_URL = new URL('../lib/index.js', import.meta.url).href;
 const mod = await import(PLUGIN_URL);
 say(`插件加载: name=${mod.name} provider=${mod.QWENWORK_PROVIDER}`);
 
