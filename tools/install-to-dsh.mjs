@@ -529,13 +529,18 @@ async function main() {
 
   // ---- 前置条件 ----
   console.log('前置条件检查：');
-  const roaming = process.env.APPDATA ?? path.join(os.homedir(), 'AppData', 'Roaming');
-  const credDir = path.join(roaming, 'QwenWorkCN');
+  // 凭据目录随平台不同：Windows 在 %APPDATA%，Linux 在 XDG 配置目录。
+  const credDir = process.platform === 'win32'
+    ? path.join(process.env.APPDATA ?? path.join(os.homedir(), 'AppData', 'Roaming'), 'QwenWorkCN')
+    : path.join(process.env.XDG_CONFIG_HOME ?? path.join(os.homedir(), '.config'), 'QwenWorkCN');
   const hasCred = fs.existsSync(credDir);
   console.log(`  千问办公登录态: ${hasCred ? '✅ 已找到' : '❌ 未找到'}`);
   if (!hasCred) {
     console.log(`     请先安装并登录千问办公桌面 App（预期目录：${credDir}）。`);
     console.log('     插件复用该 App 的登录态，本身不提供账号。');
+  } else if (process.platform === 'linux') {
+    // Linux 多一层依赖：凭据用系统密钥环里的口令加密，密钥环不可用则解不开
+    console.log('     解密依赖系统密钥环（Secret Service），请确认已解锁。');
   }
   console.log('');
 
