@@ -80,7 +80,9 @@ const matrix = [
   ['千问办公装在不同盘', '✅ 可用', '通用枚举 D-Z 盘 + 常量回退'],
   ['千问办公版本不同', '✅ 可用', '实测 1.0.5/1.1.32/1.2.0 均可签名'],
   ['千问办公完全没装', '⚠️ 部分可用', '有 fallback 版本可签名，但凭据仍需来自已登录的 App'],
-  ['换 macOS / Linux', '❌ 不可用', 'DPAPI 与 %APPDATA% 是 Windows 专有'],
+  ['换 Linux（同一用户）', '✅ 可用', '凭据 v11 由系统密钥环口令解密（实测 App 1.3.1）'],
+  ['换 Linux 用户账户', '⚠️ 需重新登录', '密钥环条目按用户隔离'],
+  ['换 macOS', '❌ 未实现', '未实现 Keychain 读取路径（可参照 Linux 模块补齐）'],
 ];
 for (const [scene, result, note] of matrix) {
   console.log(`  ${scene.padEnd(22)} ${result.padEnd(14)} ${note}`);

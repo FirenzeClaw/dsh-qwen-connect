@@ -85,13 +85,19 @@ const factors = [
   },
   {
     name: '千问办公登录凭据',
-    need: `%APPDATA%\\QwenWorkCN\\auth-v2.dat + Local State`,
-    portable: '必须在目标机登录过（DPAPI 绑定用户账户，无法拷贝）',
+    need: process.platform === 'win32'
+      ? `%APPDATA%\\QwenWorkCN\\auth-v2.dat + Local State`
+      : `$XDG_CONFIG_HOME/QwenWorkCN/auth-v2.dat（v11）`,
+    portable: '必须在目标机登录过（密钥绑定本机用户，无法拷贝）',
   },
   {
-    name: 'Windows DPAPI',
-    need: 'CryptUnprotectData（当前用户）',
-    portable: 'Windows 专有；跨机器/跨用户不可解密',
+    name: process.platform === 'win32' ? 'Windows DPAPI' : 'Linux Secret Service',
+    need: process.platform === 'win32'
+      ? 'CryptUnprotectData（当前用户）'
+      : '系统密钥环里 QwenWorkCN 的 Safe Storage 口令',
+    portable: process.platform === 'win32'
+      ? 'Windows 专有；跨机器/跨用户不可解密'
+      : 'Linux 专有；随登录用户走，不跨机器',
   },
   {
     name: 'DSH',
@@ -113,7 +119,11 @@ for (const f of factors) {
 
 console.log('\n=== 3) 凭据的可移植性实测 ===');
 // 凭据里哪些字段是「本机绑定」的、哪些随登录态走
-const credPath = path.join(process.env.APPDATA ?? '', 'QwenWorkCN', 'auth-v2.dat');
+// 目录随平台不同：Windows 在 %APPDATA%，Linux 在 XDG 配置目录
+const credDir = process.platform === 'win32'
+  ? path.join(process.env.APPDATA ?? '', 'QwenWorkCN')
+  : path.join(process.env.XDG_CONFIG_HOME ?? path.join(os.homedir(), '.config'), 'QwenWorkCN');
+const credPath = path.join(credDir, 'auth-v2.dat');
 check('本机存在凭据文件', fs.existsSync(credPath), credPath);
 
 console.log('\n=== 4) 代码里对本机条件的假设（逐个核对）===');
