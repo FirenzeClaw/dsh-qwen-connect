@@ -421,7 +421,7 @@ line('\n--- 插件配置表单 ---');
         },
         mutate: async (ops, revision) => {
           mutations.push({ ops, revision });
-          return true;
+          return opts.mutateImpl === undefined ? true : opts.mutateImpl(ops, revision);
         },
       };
       const root = createRoot(container);
@@ -437,6 +437,7 @@ line('\n--- 插件配置表单 ---');
       }
       return {
         html: container.innerHTML,
+        container,
         mutations,
         threw,
         async click(labelText) {
@@ -549,7 +550,95 @@ line('\n--- 插件配置表单 ---');
       await view.unmount();
     }
 
-    // ⑥ summary 视图给一行摘要（插件列表页用）
+    // ⑥ form 缺失时不渲染（否则会永远显示「正在读取配置…」）
+    {
+      const container = dom.window.document.createElement('div');
+      dom.window.document.body.appendChild(container);
+      const root = createRoot(container);
+      await react.act(async () => {
+        root.render(react.createElement(rowReg.component, { t, view: 'page' }));
+      });
+      if (container.innerHTML !== '') {
+        fail(`form 缺失时应渲染空，实际：${container.innerHTML.slice(0, 120)}`);
+      } else {
+        pass('form 缺失：不渲染（避免无限「正在读取配置…」）');
+      }
+      await react.act(async () => {
+        root.unmount();
+      });
+      container.remove();
+    }
+
+    // ⑦ 宿主拒绝写入（mutate 返回 false）：给出提示并恢复权威值
+    {
+      const view = await mountForm(FULL, { mutateImpl: async () => false });
+      try {
+        const input = view.html.includes('deepseek-flash');
+        if (!input) fail('未渲染白名单输入框');
+        // 改文本框并失焦
+        const textInput = view.container.querySelector('input[type="text"]');
+        const setter = Object.getOwnPropertyDescriptor(
+          dom.window.HTMLInputElement.prototype,
+          'value',
+        ).set;
+        await react.act(async () => {
+          setter.call(textInput, 'pro, flash');
+          textInput.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+          // React 18 的 onBlur 挂在 focusout 上（由根容器委托、依赖冒泡）；
+          // 直接派发不冒泡的 blur 事件不会触发 onBlur。
+          textInput.dispatchEvent(new dom.window.FocusEvent('focusout', { bubbles: true }));
+        });
+        await react.act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 30));
+        });
+        const alert = view.container.querySelector('[role="alert"]');
+        if (alert === null) fail('写入被拒时应有可见提示');
+        else if (!view.container.textContent.includes('没有保存成功')) {
+          fail(`提示文案不对：${alert.textContent}`);
+        } else pass('写入被拒：给出可见提示');
+        // 输入框应恢复为权威值，而不是留着被拒的文本
+        const after = view.container.querySelector('input[type="text"]').value;
+        if (after !== 'deepseek-flash') fail(`被拒后输入框应恢复权威值，实际「${after}」`);
+        else pass('写入被拒：输入框恢复为当前生效值');
+      } catch (error) {
+        fail(`拒绝写入场景失败：${error.message}`);
+      }
+      await view.unmount();
+    }
+
+    // ⑧ 回车也能提交（只有失焦时，打完字直接关面板会静默丢改动）
+    {
+      const view = await mountForm(FULL);
+      try {
+        const textInput = view.container.querySelector('input[type="text"]');
+        const setter = Object.getOwnPropertyDescriptor(
+          dom.window.HTMLInputElement.prototype,
+          'value',
+        ).set;
+        await react.act(async () => {
+          setter.call(textInput, 'max');
+
+          textInput.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+          textInput.dispatchEvent(
+            new dom.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }),
+          );
+        });
+        await react.act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 30));
+        });
+        const last = view.mutations.at(-1);
+        if (last?.ops?.[0]?.path?.[0] !== 'allowedModelIds') {
+          fail('回车未提交白名单');
+        } else if (JSON.stringify(last.ops[0].value) !== JSON.stringify(['max'])) {
+          fail(`回车提交的值不对：${JSON.stringify(last.ops[0].value)}`);
+        } else pass('回车提交白名单 → mutate(allowedModelIds=[max])');
+      } catch (error) {
+        fail(`回车提交场景失败：${error.message}`);
+      }
+      await view.unmount();
+    }
+
+    // ⑨ summary 视图给一行摘要（插件列表页用）
     {
       const container = dom.window.document.createElement('div');
       dom.window.document.body.appendChild(container);
