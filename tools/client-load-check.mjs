@@ -1,6 +1,6 @@
 /**
  * 验证 client.js 能被 DSH 的浏览器模块加载器正确求值，并真的注册到
- * `settings.plugin.item` slot。
+ * `settings.models.provider-card` 与 `conversation.input.right` 两个 slot。
  *
  * 这里用一个最小的 `window.__ModuleLoader__` / `react` / `react/jsx-runtime`
  * 桩来跑 factory，不需要浏览器。

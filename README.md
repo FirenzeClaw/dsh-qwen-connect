@@ -9,7 +9,10 @@
 |---|---|
 | Provider 注册（模型出现在 DSH 模型选择器，名称含倍率） | ✅ |
 | 设置卡片：账号 / 积分 / 套餐 / 模型列表（含配额进度条） | ✅ |
-| 凭据解密（Chromium v10 + Windows DPAPI） | ✅ |
+| 输入框积分胶囊（仅在选中千问模型时出现） | ✅ |
+| 设置页配置项（模型白名单 / 是否拉上游目录 / 是否显示积分） | ✅ |
+| 模型目录热更新（改配置或上游变化无需重启 DSH） | ✅ |
+| 凭据解密（Chromium v10/v11 + Windows DPAPI / Linux Secret Service） | ✅ |
 | 账号 / 额度 / 套餐 REST 查询 | ✅ |
 | **真实对话**（WASM 签名 + SSE 聊天端点） | ✅ |
 | **流式输出 + 多轮上下文** | ✅ |
@@ -19,6 +22,24 @@
 | **上游重试**（限流 / 网关瞬时故障，最多 3 次） | ✅ |
 | **请求方鉴别**（shim 共享密钥 + 常量时间比较） | ✅ |
 | **动态模型目录**（签名请求 `/api/v2/model/list` + 白名单过滤） | ✅ |
+
+## 配置项
+
+插件的配置面来自 `lib/index.js` 导出的 `Config` schema（schemastery），
+DSH 的设置服务据此自动生成表单——出现在 **设置 → 模型 → QwenWork 卡片**。
+
+| 字段 | 默认值 | 说明 |
+|---|---|---|
+| `allowedModelIds` | `['deepseek-flash']` | 模型白名单。留空表示不限制（显示上游全部模型）。 |
+| `refreshCatalogOnStart` | `true` | 启动时从上游拉取模型目录。关闭后只使用内置目录。 |
+| `showCredits` | `true` | 在输入框右侧显示千问剩余积分。 |
+
+两点实现说明：
+
+- **`showCredits=false` 落在数据层**：状态路由直接不返回额度字段，而不是
+  让客户端拿到数据后再藏起来。
+- **改配置不需要重启**：provider 的 `models` 是 getter，且目录变化后经
+  `registerAdapter().replace()` 触发 `llm/adapters-updated`，客户端随即重拉。
 
 ## 图片输入（视觉）
 
@@ -99,7 +120,7 @@ node tools/verify-all.mjs        # 一键跑全部 5 项
 | 项目 | 内容 |
 |---|---|
 | `test/web-status.test.mjs` | 12 项：脱敏、环回 403、凭据错误降级、null 不变成 0 |
-| `tools/client-load-check.mjs` | 5 项：`__ModuleLoader__` 契约、slot `key`/`priority`、slot API 损坏时降级 |
+| `tools/client-load-check.mjs` | 9 项：`__ModuleLoader__` 契约、两个槽位的注册参数形态、胶囊文案与归属判定（含"不匹配时 0 次请求"）、slot API 损坏时降级 |
 | `tools/host-load-check.mjs` | host 入口可加载性 |
 | `tools/apply-check.mjs` | provider 注册行为 12 项断言（含两条降级路径） |
 | `tools/seam-live-check.mjs` | 端到端真实 API 实测 + JWT 不下发断言 |
