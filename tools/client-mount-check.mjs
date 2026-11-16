@@ -482,7 +482,7 @@ line('\n--- 插件配置表单 ---');
         const missing = ['思考深度', '允许模型思考', '最高（max）', '超高（xhigh）', '模型白名单']
           .filter((needle) => !view.html.includes(needle));
         if (missing.length > 0) fail(`配置表单缺少内容：${missing.join('、')}`);
-        else pass(`配置表单渲染成功（${view.html.length} 字节，含 5 个档位）`);
+        else pass(`配置表单渲染成功（${view.html.length} 字节）`);
       }
       await view.unmount();
     }
@@ -636,6 +636,43 @@ line('\n--- 插件配置表单 ---');
         fail(`回车提交场景失败：${error.message}`);
       }
       await view.unmount();
+    }
+
+    // ⑩ 档位清单与 lib 层同源（客户端是独立 bundle，只能手抄，必须守）
+    //
+    // lib/client.js 是浏览器侧 bundle，拿不到 lib/models.js 的导出，
+    // 所以 THINKING_LEVELS 只能手抄一份。手抄就会漂移：lib 层新增一档
+    // 而表单漏掉，界面上永远少一个开关，且没有任何报错。这里拿真渲染
+    // 出来的开关数量与 lib 层的档位表比对。
+    {
+      const models = await import('../lib/models.js').catch(() => null);
+      const indexModule = await import('../lib/index.js').catch(() => null);
+      if (models === null || indexModule === null) {
+        fail('无法加载 lib/models.js 或 lib/index.js');
+      } else {
+        const view = await mountForm(FULL);
+        // 每个档位在页面上都有自己的一行开关（label 文案取自各自档位的
+        // labelKey）。少一行就说明客户端的 THINKING_LEVELS 与 lib 层漂移了。
+        const cap = (id) => id.charAt(0).toUpperCase() + id.slice(1);
+        const missing = models.THINKING_LEVEL_IDS.filter((level) => {
+          const label = zh[`thinking${cap(level)}`];
+          return typeof label !== 'string' || !view.html.includes(label);
+        });
+        if (missing.length > 0) {
+          fail(
+            `lib 层有这些档位但表单没渲染：${missing.join(' / ')} — `
+              + '客户端的 THINKING_LEVELS 已漂移',
+          );
+        } else {
+          // 字段名映射也得对得上，否则界面上有开关却写错了配置项
+          const badField = models.THINKING_LEVEL_IDS.map((level) =>
+            indexModule.thinkingFieldOf(level),
+          ).filter((field) => typeof field !== 'string');
+          if (badField.length > 0) fail(`thinkingFieldOf 返回了非字符串：${badField}`);
+          else pass(`档位清单与 lib 层同源（${models.THINKING_LEVEL_IDS.join(' / ')}）`);
+        }
+        await view.unmount();
+      }
     }
 
     // ⑨ summary 视图给一行摘要（插件列表页用）
