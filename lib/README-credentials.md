@@ -116,10 +116,13 @@ user.name=Test User | plan.name=Free | plan.pid=subscription-cn-free | quota.rem
 集成层接缝复验（`lib/credentials-seam.js`）：
 ```
 isWired: true
-fetchPlan:  {"tierName":"Free","tier":"subscription-cn-free","isPersonal":true}
-fetchQuota: {"remaining":2100,"total":null,"used":null,...}
+getAccountContext: user / plan / quota 三项一次查全
 getValidToken: 返回 555 字符 token ✓
 ```
+
+> 接缝原先另有 `fetchPlan()` 与 `fetchQuota()` 两个便捷函数，各自再调一次
+> `getAccountContext()` ——同样的数据查三遍。两者已删除，调用方直接读
+> `getAccountContext()` 返回值里的 `plan` / `quota` 字段。
 
 ## 五、安全约束落实
 

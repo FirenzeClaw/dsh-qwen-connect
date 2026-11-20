@@ -14,8 +14,6 @@ import {
   isWired,
   loadDiagnostic,
   getAccountContext,
-  fetchQuota,
-  fetchPlan,
 } from '../lib/credentials-seam.js';
 
 const line = (s) => process.stdout.write(`${s}\n`);
@@ -40,22 +38,6 @@ try {
 } catch (error) {
   line(`getAccountContext ERR [${error?.code ?? error?.name}]: ${error?.message}`);
   if (error?.recovery) line(`  recovery: ${error.recovery}`);
-}
-
-try {
-  line('--- fetchQuota（只报类型）---');
-  const q = await fetchQuota();
-  line(`  remaining=${numeric(q.remaining)} total=${numeric(q.total)} used=${numeric(q.used)} exceeded=${present(q.exceeded)}`);
-} catch (error) {
-  line(`fetchQuota ERR [${error?.code ?? error?.name}]: ${error?.message}`);
-}
-
-try {
-  line('--- fetchPlan（只报存在性）---');
-  const p = await fetchPlan();
-  line(`  tierName=${present(p.tierName)} tier=${present(p.tier)} isPersonal=${present(p.isPersonal)}`);
-} catch (error) {
-  line(`fetchPlan ERR [${error?.code ?? error?.name}]: ${error?.message}`);
 }
 
 // 端到端：把接缝喂给卡片后端，检查最终下发文档的**形状**与**安全性**

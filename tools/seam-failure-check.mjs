@@ -1,13 +1,18 @@
 /**
- * 验证接缝的多路径探测**不会静默降级**。
+ * 验证接缝**不会静默降级**。
  *
- * 关切（来自 captain）：多路径探测（./auth.js 与 ../src/auth.js 都试）若是
- * 两个路径都不存在就静默返回空值，会把真实错误藏起来。
+ * 接缝早期做过多路径探测（`./auth.js` 与 `../src/auth.js` 都试），当时的
+ * 关切是：两条路径都不存在时若静默返回空值，真实错误就被藏起来了。现在
+ * 路径已收成固定单条（布局稳定，回退候选是死分支），但那份要求没变——
+ * 缺模块、坏模块都必须给出明确、可诊断的错误。
  *
- * 本测试用**真实文件系统**制造三种情形，断言每种都给出明确、可诊断的错误：
+ * 本测试用**真实文件系统**制造三种情形，断言每种都给出明确错误：
  *   1. 正常情形 —— 实现可用，应成功
- *   2. 路径全不存在 —— 应抛 QwenAuthError 且 recovery 含"加载失败"与真实原因
+ *   2. 模块不存在 —— 应抛 QwenAuthError 且 recovery 含真实原因
  *   3. 文件存在但内容损坏 —— 同样必须抛出，不得静默通过
+ *
+ * ⚠️ 情形 2 与情形 3 缺一不可：只测「不存在」的话，一个把 SyntaxError 吞成
+ * 空值的实现也能通过。
  *
  * 用法：node tools/seam-failure-check.mjs
  */
@@ -73,7 +78,7 @@ const GOOD_REST = `export async function fetchAccountOverview() { return { user:
 
 // ---------------------------------------------------------------- 情形 2
 {
-  say('\n--- 情形 2：两条候选路径都不存在 ---');
+  say('\n--- 情形 2：实现模块不存在 ---');
   const seam = await loadSeamWith({ authFiles: {}, restFiles: {} });
   assert.equal(await seam.isWired(), false, '实现缺失时应 isWired=false');
 
@@ -116,21 +121,9 @@ const GOOD_REST = `export async function fetchAccountOverview() { return { user:
   say('✔ 损坏未被掩盖（正确抛错）');
 }
 
-// ---------------------------------------------------------------- 情形 4
-{
-  say('\n--- 情形 4：首选路径缺失，回退路径可用（验证探测真的会回退）---');
-  const seam = await loadSeamWith({
-    authFiles: { '../src/auth.js': GOOD_AUTH },
-    restFiles: { '../src/rest.js': GOOD_REST },
-  });
-  // 注意：这里的 ../src/ 是相对于 lib/ 的，即 case-XXXX/src/
-  assert.equal(await seam.isWired(), true, '首选缺失时应回退到备选路径');
-  say('✔ 回退路径生效（isWired=true）');
-}
-
 rmSync(root, { recursive: true, force: true });
 
-say('\n全部通过：多路径探测在四种情形下行为明确，无静默降级。');
+say('\n全部通过：三种情形下行为明确，无静默降级。');
 
 // 显式退出：本脚本反复 import 了多个临时模块，ESM 加载器可能仍持有句柄，
 // 不显式退出会让进程挂住（实测在 verify-all 的 spawnSync 中会超时）。
