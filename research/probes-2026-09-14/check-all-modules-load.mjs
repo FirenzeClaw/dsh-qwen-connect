@@ -3,7 +3,7 @@
 const MODULES = [
   'auth', 'chat-shim', 'client-skip', 'credentials-seam',
   'credentials', 'dpapi', 'errors', 'index', 'loopback', 'models', 'rest',
-  'runtime-identity', 'signer-session', 'signer-shim', 'sse', 'status-paths', 'web-status',
+  'runtime', 'runtime-identity', 'signer-session', 'signer-shim', 'sse', 'status-paths', 'web-status',
 ];
 
 let fail = 0;
