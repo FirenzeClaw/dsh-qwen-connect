@@ -105,6 +105,8 @@ function collectFiles() {
   addIfFile('docs/已知上游边界.md');
   // 多版本安装说明
   addIfFile('安装说明.md');
+  // Windows 专用安装提示词与排查指南（新机器上最常见的使用场景）
+  addIfFile('Windows安装与排查.md');
 
   return out.sort();
 }

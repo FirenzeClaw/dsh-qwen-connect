@@ -2,11 +2,13 @@
 
 `dsh-qwen-connect` 插件的可移植安装包。**零配置**——复用千问办公（QwenWorkCN）桌面 App 的登录态，不需要 API Key。
 
+> Windows 上遇到问题，先看 **`Windows安装与排查.md`**（含安装提示词、快速 QA、按现象的排查表）。
+
 ## 前置条件
 
 | 条件 | 说明 |
 |---|---|
-| Windows | 凭据解密依赖 Windows DPAPI |
+| Windows 10/11（x64）或 Linux | Windows 走 DPAPI；Linux 走系统密钥环（需 `python3` + `python3-gi`，见 `安装说明.md`） |
 | DSH 已安装并**至少启动过一次** | 需要 `profiles\web` 目录存在 |
 | **千问办公桌面 App 已安装并登录** | 插件复用其登录态，**本身不提供账号** |
 | Node.js ≥ 22.19 或 ≥ 24 | DSH 自带的 Node 即可 |
@@ -54,11 +56,10 @@ node tools/install-to-dsh.mjs --uninstall
 重启 DSH 后：
 
 1. 打开 **设置 → 插件**，应看到「千问办公」卡片，显示账号 / 积分 / 套餐 / 三个模型
-2. 打开**模型选择器**，应有 `QwenWork` 提供方的三个模型：
-   - `pro`（高级，1.00x）
-   - `flash`（标准，0.10x，最便宜）
-   - `qwen3.8-max-preview`（Qwen3.8-Max，1.10x）
-3. 选 `pro` 发一条消息试对话
+2. 打开**模型选择器**，默认只有一个：`DeepSeek-V4.1-Flash`（x0.10，1M 上下文）
+   —— 这是默认白名单 `allowedModelIds = ['deepseek-flash']` 的结果，不是故障。
+   上游该账号实际有 13 个模型，可在插件配置里放开。
+3. 选它发一条消息试对话
 
 ## 安装脚本做了什么（原理）
 
@@ -106,16 +107,19 @@ A: 用 `--bridge-dir` 指定一个能向上解析到 DSH node_modules 的目录�
 例如插件源码所在的开发根目录。
 
 **Q: 对话报 `pi-ai image input requires the durable attachment service`？**
-A: 不应出现。插件已如实声明模型「仅文本」。若出现，说明模型声明被改回支持图片，
-而 shim 并未实现图片转发——请检查 `lib/models.js` 的 `supportsImages` 必须为 `false`。
+A: 说明宿主没有可用的附件服务，而模型仍声明了图片输入。插件本应在这种环境下自动
+退回「仅文本」（`supportsImages` 由附件服务是否可用决定），不应报错。若稳定复现，
+请附 DSH 版本与完整错误文案——这是声明与能力不一致的缺陷，不是配置问题。
 
 ## 已知边界
 
-| 未支持 | 说明 |
+| 能力 | 状态 |
 |---|---|
-| 图片输入 | shim 不转发图片，模型声明为仅文本 |
-| 工具调用 | 已支持（透传 `tools`，转换 `tool_calls`） |
-| 动态模型目录 | 模型列表静态内置（`/api/v2/model/list` 需签名） |
+| 图片输入 | 支持。链路：附件服务 → pi-ai → shim 转 `image_url`；附件服务不可用时自动声明「仅文本」 |
+| 工具调用 | 支持（透传 `tools`，转换 `tool_calls`） |
+| 动态模型目录 | 支持。签名后 `/api/v2/model/list` 可访问，按白名单收窄；白名单过滤后为空时**降级为不过滤**，不会让你没有模型可用 |
+| 思考深度 | 支持 5 档（低/中/高/超高/最高），可在配置里逐档启用或整体关闭 |
+| macOS | 未实现 Keychain 读取路径 |
 
 ## 许可与免责
 
