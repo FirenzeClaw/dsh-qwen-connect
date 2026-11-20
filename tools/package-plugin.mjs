@@ -23,6 +23,26 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT = path.resolve(HERE, '..');
 const require = createRequire(import.meta.url);
 
+/**
+ * python3 兜底打包脚本：用标准库 zipfile 递归打包一个目录。
+ *
+ * 之所以选 python3 而不是引入 zip 依赖：本仓库已有 python3 运行时依赖
+ * （Secret Service 口令读取走 python3 + Gio），且打包工具不该为压缩格式
+ * 引入第三方包。
+ *
+ * 用法：python3 -c <script> <zipPath> <dirName>
+ */
+const ZIPPACK_SCRIPT = [
+  'import os, sys, zipfile',
+  'out, root = sys.argv[1], sys.argv[2]',
+  'with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:',
+  '    for base, dirs, files in os.walk(root):',
+  '        dirs.sort()',
+  '        for name in sorted(files):',
+  '            full = os.path.join(base, name)',
+  '            z.write(full, full)',
+].join('\n');
+
 /** 读取插件 package.json。 */
 function readPluginManifest() {
   return JSON.parse(fs.readFileSync(path.join(PLUGIN_ROOT, 'package.json'), 'utf8'));
@@ -183,22 +203,79 @@ function main() {
 
   // 5) 生成 zip（供拷到别的电脑）
   //
-  // 用系统自带的 tar（Windows 10+ 内置 bsdtar）而非引入 zip 依赖：
-  // 插件本身零运行时依赖，打包工具也不该为一个 zip 引入第三方包。
+  // ⚠️ 这里必须**验证产物真的是 zip**，不能只看命令有没有报错。
+  //
+  // 实测事故：`tar -a -c -f x.zip` 在 Windows（内置 bsdtar）上能生成真 zip，
+  // 但在 GNU tar（Linux/macOS 的默认 tar）上 `-a` 只认 gzip/xz/zstd 等后缀，
+  // `.zip` 不在支持列表里——于是它**静默产出一个纯 tar 文件**，命令退出码仍是 0。
+  // 结果是一个 770 KB、名为 .zip、实际 `unzip` 打不开的产物（本机已复现）。
+  //
+  // 因此改为「按顺序尝试多种方式，每步都用魔数验证」：
+  //   ① bsdtar 形态的 tar -a（Windows 10+ / macOS）
+  //   ② zip 命令（Linux 常见）
+  //   ③ python3 的 zipfile（本机已有；零第三方依赖）
   const zipPath = path.join(outRoot, `${pkgName}-${version}.zip`);
   fs.rmSync(zipPath, { force: true });
+
+  /** 真 zip 的魔数：`PK\x03\x04`。 */
+  const ZIP_MAGIC = Buffer.from([0x50, 0x4b, 0x03, 0x04]);
+
+  /** 产物是否真的是 zip（而不是被改名的 tar）。 */
+  const looksLikeZip = () => {
+    try {
+      const fd = fs.openSync(zipPath, 'r');
+      const head = Buffer.alloc(4);
+      fs.readSync(fd, head, 0, 4, 0);
+      fs.closeSync(fd);
+      return head.equals(ZIP_MAGIC);
+    } catch {
+      return false;
+    }
+  };
+
+  const zipStrategies = [
+    {
+      name: 'tar -a',
+      // tar 打包必须用相对路径且 cwd 在 outRoot，否则压缩包内会带完整绝对路径
+      run: () => execFileSync('tar', ['-a', '-c', '-f', zipPath, pkgName], {
+        cwd: outRoot, stdio: 'pipe', timeout: 120000,
+      }),
+    },
+    {
+      name: 'zip',
+      run: () => execFileSync('zip', ['-r', '-q', zipPath, pkgName], {
+        cwd: outRoot, stdio: 'pipe', timeout: 120000,
+      }),
+    },
+    {
+      name: 'python3 zipfile',
+      run: () => execFileSync('python3', ['-c', ZIPPACK_SCRIPT, zipPath, pkgName], {
+        cwd: outRoot, stdio: 'pipe', timeout: 120000,
+      }),
+    },
+  ];
+
   let zipped = false;
-  try {
-    // tar 打包必须用相对路径且 cwd 在 outRoot，否则压缩包内会带完整绝对路径
-    execFileSync('tar', ['-a', '-c', '-f', zipPath, pkgName], {
-      cwd: outRoot,
-      stdio: 'pipe',
-      timeout: 120000,
-    });
-    zipped = fs.existsSync(zipPath);
-  } catch (e) {
-    // 没有 tar（极老的 Windows）时降级：只留解包目录，并明确告知
-    console.log(`   ⚠️ 未能生成 zip（${String(e.message).split('\n')[0].slice(0, 60)}）`);
+  const attempts = [];
+  for (const strategy of zipStrategies) {
+    try {
+      strategy.run();
+    } catch (e) {
+      attempts.push(`${strategy.name}: ${String(e.message).split('\n')[0].slice(0, 60)}`);
+      continue;
+    }
+    if (looksLikeZip()) {
+      zipped = true;
+      break;
+    }
+    // 命令成功但产物不是 zip（GNU tar 的静默行为）——删掉再试下一种
+    attempts.push(`${strategy.name}: 产物不是 zip（命令退出码为 0，但魔数不符）`);
+    fs.rmSync(zipPath, { force: true });
+  }
+  if (!zipped && attempts.length > 0) {
+    console.log('   ⚠️ 未能生成可用的 zip，尝试记录：');
+    for (const a of attempts) console.log(`      · ${a}`);
+    console.log(`      可只分发解包目录 ${pkgName}/（安装效果相同）。`);
   }
   if (zipped) {
     const kb = (fs.statSync(zipPath).size / 1024).toFixed(1);
