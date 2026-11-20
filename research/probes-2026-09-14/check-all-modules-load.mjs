@@ -1,7 +1,7 @@
 // research/probes-2026-09-14/check-all-modules-load.mjs
 // 逐个 import 每个 lib 模块，确认没有加载期错误（循环依赖、缺导出、副作用崩溃）。
 const MODULES = [
-  'api', 'auth-api', 'auth', 'chat-shim', 'client-skip', 'credentials-seam',
+  'auth', 'chat-shim', 'client-skip', 'credentials-seam',
   'credentials', 'dpapi', 'errors', 'index', 'loopback', 'models', 'rest',
   'runtime-identity', 'signer-session', 'signer-shim', 'sse', 'status-paths', 'web-status',
 ];

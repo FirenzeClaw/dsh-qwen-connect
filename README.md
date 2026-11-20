@@ -157,7 +157,7 @@ lib/status-paths.js     host / client 共享常量
 ```
 
 凭据与 REST 实现（`lib/credentials.js`、`lib/auth.js`、`lib/rest.js`、
-`lib/errors.js`、`lib/dpapi.js`、`lib/api.js`）。集成层**只通过接缝消费**，
+`lib/errors.js`、`lib/dpapi.js`）。集成层**只通过接缝消费**，
 不重复实现任何解密逻辑。
 
 ## 模型目录
