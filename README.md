@@ -20,7 +20,7 @@
 | **工具调用**（`tools` 透传 + `tool_calls` 协议转换） | ✅ |
 | **图片输入**（DSH 附件服务 → `chat_context.imageUrls`） | ✅ |
 | **token 统计**（上游 `raw_usage` → OpenAI `usage`） | ✅ |
-| **上游重试**（限流 / 网关瞬时故障，最多 3 次） | ✅ |
+| **上游重试**（交给 DSH 重试层：限流 / 5xx / 空回复 / 传输中断，5 轮指数退避） | ✅ |
 | **请求方鉴别**（shim 共享密钥 + 常量时间比较） | ✅ |
 | **动态模型目录**（签名请求 `/api/v2/model/list` + 白名单过滤） | ✅ |
 
@@ -253,6 +253,10 @@ Copy-Item "$w\_backup-qwen-connect-20260911-141226\cordis.patch.yml" "$w\cordis.
    来源会记在 `signerSession.describe().cosyVersion.source` 里。
 7. **Linux 需要 python3 + python3-gi**：读取系统密钥环走 Gio 的 D-Bus，
    不引入 npm 依赖（保持零运行时依赖）。
+8. **重试只有一层，且不重试超时**：插件自身的转发层是单次尝试，重试完全交给
+   DSH 的 `llm-retry`（5 轮指数退避）。`TIMEOUT` 被刻意排除在可重试集合外——
+   上游响应头超时是 180 秒，超时几乎总是高峰排队，重试只是再等 180 秒。代价是
+   超时场景下一次请求就明确失败，用户需要自己重发。
 
 ## 模型目录：动态拉取 + 白名单
 

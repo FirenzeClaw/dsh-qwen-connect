@@ -84,6 +84,30 @@ function makeCtx() {
   assert.equal(typeof adapter.resolveModel, 'function');
   say('✔ adapter 具备 PiAiAdapter 接口（listModels / resolveModel）');
 
+  // ---- 重试只留一个主人（规格 FR-001..FR-004）-----------------------
+  // shim 层已退化为单次尝试，这里断言上层的重试策略确实是唯一的那个主人：
+  //   ① 必须启用重试（否则限流 / 空回复就永远不重试了）
+  //   ② **必须不含 TIMEOUT** —— 上游响应头超时是 180s，重试等于再等 180s，
+  //      而超时几乎总是高峰排队。含它就把「最坏 3 分钟」变回「15 分钟」。
+  const policy = adapter.providerRetryPolicy(QWENWORK_PROVIDER);
+  assert.ok(policy !== undefined, 'retryPolicy 必须显式配置，不能留给默认值');
+  assert.ok(policy.maxRetries >= 1, `maxRetries 应至少 1，实际 ${policy.maxRetries}`);
+  assert.equal(
+    policy.retryableCodes.includes('TIMEOUT'),
+    false,
+    `TIMEOUT 不得可重试（会让超时场景最坏 15 分钟），实际 ${JSON.stringify(policy.retryableCodes)}`,
+  );
+  for (const code of ['EMPTY_RESPONSE', 'RATE_LIMIT', 'SERVER', 'TRANSPORT']) {
+    assert.equal(
+      policy.retryableCodes.includes(code),
+      true,
+      `${code} 应可重试，实际 ${JSON.stringify(policy.retryableCodes)}`,
+    );
+  }
+  say(
+    `✔ retryPolicy: maxRetries=${policy.maxRetries} codes=[${policy.retryableCodes.join(',')}]（不含 TIMEOUT）`,
+  );
+
   assert.equal(calls.directories.length, 1, '必须注册 configurable provider 目录');
   const entry = calls.directories[0][0];
   assert.equal(entry.provider, 'qwenwork');

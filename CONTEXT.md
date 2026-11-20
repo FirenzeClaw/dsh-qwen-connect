@@ -34,7 +34,11 @@
 - 插件运行时状态是 **7 个模块级 `let`**：`lib/index.js:395-401`（shim 三件套）、`:414,417`（`activeModels` / `catalogSource`）、`:427,438`（`adapterRegistration` / `currentConfig`）。
 - `stopChatShim()` 定义在 `lib/index.js:663`，在 `lib/` 内**没有调用者**；运行期禁用插件后，监听环回端口的 HTTP server 与共享密钥存活到进程退出。
 - Cordis 的 `update()`（`node_modules/@deepseek-ai/cordis/lib/index.js:1424`）会走 `restart()` → dispose → 重新 apply。
-- 重试叠两层：`lib/index.js:321` 用 `resolveRetryPolicy(undefined)` → `maxRetries: 5`；`lib/chat-shim.js:74` `UPSTREAM_MAX_ATTEMPTS = 3`。`dsh-base/cordis.patch.yml:99` 默认启用 `llm-retry`；`dsh-llm-pi-ai/lib/index.js:1454` 把含 `5\d\d` 的错误消息归为可重试的 `SERVER`。
+- ~~重试叠两层：`lib/index.js:321` 用 `resolveRetryPolicy(undefined)` → `maxRetries: 5`；`lib/chat-shim.js:74` `UPSTREAM_MAX_ATTEMPTS = 3`。~~
+  已解决（本项提交）：shim 层重试全部删除，退化为单次尝试；`retryPolicy`
+  显式配置为 4 类可重试码且**不含 `TIMEOUT`**。`dsh-base/cordis.patch.yml:99`
+  启用 `llm-retry`；`dsh-llm-pi-ai/lib/index.js:1454` 把含 `5\d\d` 的错误消息
+  归为可重试的 `SERVER` —— 这正是重试该待的那一层。
 - ~~`lib/auth-api.js` 导出 43 个名字，唯一消费者是 `test/unit/index-exports.test.mjs`。~~
   已解决（`39bc286`、本项提交）：桶文件与其测试一并删除；仍有价值的错误分类断言
   迁到 `test/unit/error-taxonomy.test.mjs`，直接测 `lib/errors.js`。
@@ -49,7 +53,7 @@
 |---|---|
 | C7 构建产物出库 | ✅ `8cab548` / `89bf1a4` |
 | C6 删没有消费者的契约层 | ✅ `39bc286` 起 |
-| C2 重试只留一个主人 | 待实施 |
+| C2 重试只留一个主人 | ✅ 本项提交 |
 | C3 运行时状态跟着 apply 走 | 待实施 |
 
 ## 约束与惯例（来自用户与本仓库）
