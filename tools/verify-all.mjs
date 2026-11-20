@@ -60,6 +60,15 @@ const STEPS = [
     args: ['research/probes-2026-09-14/check-portable-package.mjs'],
     skipExitCodes: [2],
   },
+  // 不变量：装进 profile 的那一份必须就是本仓库（符号链接），不能是副本。
+  // 真实事故：profile 用 `file:` 声明插件，一次 pnpm install 把它物化成硬链接
+  // 副本，此后源码继续改、profile 里那份冻结，界面上却毫无异常。
+  // 未安装时本脚本 exit 2 跳过（多数开发机上没装）。
+  {
+    name: '已安装的那份是仓库本身（非副本）',
+    args: ['research/probes-2026-09-14/check-install-drift.mjs'],
+    skipExitCodes: [2],
+  },
   // 不变量：构建产物不得进版本库。
   // 曾经用「运行时护栏」防止误删受跟踪的 .portable-check，但那只是掩盖问题——
   // 产物继续留在库里并与源码漂移。出库后改用这条断言直接守着。

@@ -135,9 +135,40 @@ function createLink(linkPath, targetPath) {
   }
 }
 
-/** 移除 Junction / symlink（只删链接本身，不动目标）。 */
-function removeLink(linkPath) {
+/**
+ * 移除 profile 里的插件入口（Junction / symlink，或已被物化的实体目录）。
+ *
+ * 三种形态都要能处理：
+ *   1. 符号链接 / Junction —— 只删链接本身，不动目标
+ *   2. **实体目录** —— 由 pnpm 把 `file:` 依赖物化而来（见 editProfilePackage
+ *      的注释）。它不是链接，但也不是用户数据：内容完全来自仓库，可以删除
+ *      后重建链接。
+ *   3. 不存在 —— 直接返回
+ *
+ * ⚠️ 第 2 种是**真实缺陷**的修复：原来只做 `fs.unlinkSync`，对实体目录抛
+ * `EISDIR: illegal operation on a directory`，安装器当场失败，而报出的错误
+ * 与真实原因（安装副本已分叉）毫无关系。
+ *
+ * 安全边界：只对调用方明确传入的**插件入口路径**使用，绝不用于
+ * `node_modules` 顶层或任何可能含用户数据的目录。
+ *
+ * @param {string} linkPath profile 里的插件入口路径
+ * @param {{ dryRun?: boolean, logger?: (msg: string) => void }} [opts]
+ */
+function removeLink(linkPath, opts = {}) {
   if (!fs.existsSync(linkPath) && !isJunction(linkPath)) return;
+  if (opts.dryRun === true) return;
+
+  const st = fs.lstatSync(linkPath);
+  if (st.isDirectory()) {
+    opts.logger?.(
+      `  注意：${linkPath} 是实体目录而非链接——它由 pnpm 把 file: 依赖物化而成，`
+        + '已与仓库分叉。将删除该副本并重建为符号链接。',
+    );
+    fs.rmSync(linkPath, { recursive: true, force: true });
+    return;
+  }
+
   if (process.platform === 'win32') {
     // rmdir 对 Junction 只删除链接，不递归目标内容
     execFileSync('cmd', ['/c', 'rmdir', linkPath], { stdio: 'pipe' });
@@ -160,14 +191,20 @@ function editProfilePackage(profileDir, pluginName, dryRun) {
   const pkg = parseJsonTolerant(raw);
   const changes = [];
 
-  const fileSpec = `file:./node_modules/${pluginName}`;
   const linkSpec = `link:./node_modules/${pluginName}`;
 
   // ① dependencies
+  //
+  // ⚠️ 必须用 `link:` 协议，**不能**用 `file:`。实测教训（2026-11-18）：
+  // profile 里跑一次 `pnpm install`，`file:` 声明的本地目录会被**物化成
+  // 硬链接副本**，把安装器建的符号链接整个覆盖掉。后果是装好的插件从此
+  // 冻结在那一刻——源码继续改，profile 里那份再也不动，而界面上一切正常，
+  // 只有行为莫名停在旧版本。`link:` 声明的依赖在 pnpm 之后仍是符号链接
+  // （同 profile 里 `@local/*`、`billion-context` 等均为如此）。
   pkg.dependencies ??= {};
-  if (pkg.dependencies[pluginName] !== fileSpec) {
-    changes.push(`dependencies["${pluginName}"] = "${fileSpec}"`);
-    pkg.dependencies[pluginName] = fileSpec;
+  if (pkg.dependencies[pluginName] !== linkSpec) {
+    changes.push(`dependencies["${pluginName}"] = "${linkSpec}"`);
+    pkg.dependencies[pluginName] = linkSpec;
   }
 
   // ② dsh.profile.bundles
@@ -454,7 +491,7 @@ async function main() {
     console.log('[2/3] 移除 Junction');
     if (fs.existsSync(linkPath) || isJunction(linkPath)) {
       console.log(`  ${linkPath}`);
-      if (!opts.dryRun) removeLink(linkPath);
+      removeLink(linkPath, { dryRun: opts.dryRun, logger: (m) => console.log(m) });
       console.log(`  ${opts.dryRun ? '（预览）' : '✅ 已移除'}`);
     } else {
       console.log('  不存在，跳过');
@@ -473,8 +510,15 @@ async function main() {
     console.log(`  已就绪：${linkPath}`);
   } else {
     if (fs.existsSync(linkPath) || isJunction(linkPath)) {
-      console.log(`  已存在但指向他处，将替换：${currentTarget}`);
-      if (!opts.dryRun) removeLink(linkPath);
+      // 区分两种「指向他处」：不是符号链接 = pnpm 物化出的副本，已与仓库
+      // 分叉（源码改了、装的那份没跟着动）。这个区别对使用者很重要，
+      // 所以代码上就把话说明白，而不是统一报一句「指向他处」。
+      if (!isJunction(linkPath)) {
+        console.log('  已存在但不是符号链接（被 pnpm 物化成了实体目录），安装副本已与仓库分叉');
+      } else {
+        console.log(`  已存在但指向他处，将替换：${currentTarget}`);
+      }
+      removeLink(linkPath, { dryRun: opts.dryRun, logger: (m) => console.log(m) });
     }
     console.log(`  ${linkPath}`);
     console.log(`    → ${sourceDir}`);
