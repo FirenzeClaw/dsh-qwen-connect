@@ -121,11 +121,13 @@ for (const step of STEPS) {
     cwd: root,
     stdio: 'inherit',
   });
-  // 可选步骤用约定退出码表示「跳过」（如缺可选依赖），不算失败。
+  // 可选步骤用约定退出码表示「跳过」：可能是缺可选依赖（react/jsdom），
+  // 也可能是缺构建产物（dist/ 未生成）。具体原因由该脚本自己打印，
+  // 这里不再猜一个固定的说法——猜错过一次（把缺产物说成缺依赖）。
   const skipCodes = step.skipExitCodes ?? [];
   if (result.status !== 0) {
     if (skipCodes.includes(result.status)) {
-      process.stdout.write(`○ 跳过: ${step.name} (exit ${result.status}，缺少可选依赖)\n`);
+      process.stdout.write(`○ 跳过: ${step.name} (exit ${result.status}，原因见上方)\n`);
     } else {
       failed += 1;
       process.stdout.write(`✖ 失败: ${step.name} (exit ${result.status})\n`);
