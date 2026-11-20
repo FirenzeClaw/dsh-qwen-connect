@@ -35,10 +35,22 @@
 - `stopChatShim()` 定义在 `lib/index.js:663`，在 `lib/` 内**没有调用者**；运行期禁用插件后，监听环回端口的 HTTP server 与共享密钥存活到进程退出。
 - Cordis 的 `update()`（`node_modules/@deepseek-ai/cordis/lib/index.js:1424`）会走 `restart()` → dispose → 重新 apply。
 - 重试叠两层：`lib/index.js:321` 用 `resolveRetryPolicy(undefined)` → `maxRetries: 5`；`lib/chat-shim.js:74` `UPSTREAM_MAX_ATTEMPTS = 3`。`dsh-base/cordis.patch.yml:99` 默认启用 `llm-retry`；`dsh-llm-pi-ai/lib/index.js:1454` 把含 `5\d\d` 的错误消息归为可重试的 `SERVER`。
-- `lib/auth-api.js` 导出 43 个名字，唯一消费者是 `test/unit/index-exports.test.mjs`。
-- `.portable-check/dsh-qwen-connect/` 有 36 个受跟踪文件（716K），`lib/index.js`、`lib/chat-shim.js`、`lib/client.js` 三份与源码**已不同**。
+- ~~`lib/auth-api.js` 导出 43 个名字，唯一消费者是 `test/unit/index-exports.test.mjs`。~~
+  已解决（`39bc286`、本项提交）：桶文件与其测试一并删除；仍有价值的错误分类断言
+  迁到 `test/unit/error-taxonomy.test.mjs`，直接测 `lib/errors.js`。
+- ~~`.portable-check/dsh-qwen-connect/` 有 36 个受跟踪文件（716K）……~~
+  已解决（`8cab548`）：产物全部出库，受跟踪文件 2407 → 284。
 - `lib/chat-shim.js` 的 `handleChatShim` 376 行、35 个局部声明；`test/unit/stream-robustness.test.mjs` 91 条测试每条都起假上游 + shim 两个 server。
 - 三个客户端工具合计 1382 行，各自重写「捕获 `__ModuleLoader__.load` + `fakeRequire` + ctx 桩」；`tools/render-deps.mjs` 是唯一已共享的部分。
+
+## 规格实施进展（`specs/001-runtime-foundation`）
+
+| 候选 | 状态 |
+|---|---|
+| C7 构建产物出库 | ✅ `8cab548` / `89bf1a4` |
+| C6 删没有消费者的契约层 | ✅ `39bc286` 起 |
+| C2 重试只留一个主人 | 待实施 |
+| C3 运行时状态跟着 apply 走 | 待实施 |
 
 ## 约束与惯例（来自用户与本仓库）
 
