@@ -52,8 +52,21 @@ const STEPS = [
   // 曾多次不可逆地破坏 UTF-8 文件（emoji 变 鉁?、中文变 娣蜂贡）。
   // 这类损坏会让文件语法报错或含义错乱，必须在提交前拦下。
   { name: '编码体检（BOM / 乱码）', args: ['research/probes-2026-09-14/check-encoding.mjs'] },
-  // 便携包验证：确保 dist 自包含（可拷到别的电脑直接安装）
-  { name: '便携包端到端（新机可搬运性）', args: ['research/probes-2026-09-14/check-portable-package.mjs'] },
+  // 便携包验证：确保 dist 自包含（可拷到别的电脑直接安装）。
+  // dist/ 是构建产物、不入库，所以新克隆上没有它——此时该脚本 exit 2 跳过，
+  // 生成方法为 `node tools/package-plugin.mjs`。
+  {
+    name: '便携包端到端（新机可搬运性）',
+    args: ['research/probes-2026-09-14/check-portable-package.mjs'],
+    skipExitCodes: [2],
+  },
+  // 不变量：构建产物不得进版本库。
+  // 曾经用「运行时护栏」防止误删受跟踪的 .portable-check，但那只是掩盖问题——
+  // 产物继续留在库里并与源码漂移。出库后改用这条断言直接守着。
+  {
+    name: '构建产物不得入库',
+    args: ['research/probes-2026-09-14/check-no-tracked-artifacts.mjs'],
+  },
   // DSH 多形态探测：安装器能识别 Desktop / CLI / 自定义 DSH_HOME
   { name: 'DSH 形态探测', args: ['research/probes-2026-09-14/check-detect-dsh.mjs'] },
   // 便携性因素：不得残留开发机专属路径；凭据/平台假设逐项核对

@@ -1,3 +1,9 @@
 # 依赖桥（安装器在插件目录下建立的符号链接，指向本机 DSH 安装树）
 # 必须忽略：它含本机绝对路径，提交上去在别的机器上是死链。
 node_modules/
+
+# 构建产物：由 tools/package-plugin.mjs 与验证工具生成，不入库。
+# 入库过一段时间，代价是产物与源码逐渐漂移——搜一个函数名会命中两处，
+# 其中一处是过时的。不变量由 research/probes-2026-09-14/check-no-tracked-artifacts.mjs 守着。
+dist/
+.portable-check/

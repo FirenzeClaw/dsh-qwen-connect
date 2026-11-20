@@ -20,8 +20,13 @@ const check = (label, ok, detail = '') => {
   if (!ok) fail++;
 };
 
-check('dist 目录存在', fs.existsSync(DIST), DIST);
-if (!fs.existsSync(DIST)) process.exit(1);
+// dist/ 是构建产物，不随仓库分发（见 .gitignore）。没有它时本检查无从执行，
+// 按「跳过」语义退出 2，由 verify-all 计入跳过而非失败。
+if (!fs.existsSync(DIST)) {
+  console.log('○ 跳过：dist/ 不存在（构建产物不入库）');
+  console.log('  生成方法: node tools/package-plugin.mjs');
+  process.exit(2);
+}
 
 // ---- 1) 必需文件齐全 ----
 console.log('\n=== 1) 必需文件 ===');
@@ -140,22 +145,9 @@ try {
   check('glue 模块可加载', false, e.message.slice(0, 80));
 }
 
-// ⚠️ 清理必须区别对待：`.portable-check` 在历史提交里已被 git 跟踪，
-// 直接 rmSync 会在跑一次验证后把受版本控制的文件全部删掉（实测发生）。
-// 因此只在「没有 git 记录」时才删除；有记录则保留，由 git 管理。
-const trackedInGit = (() => {
-  try {
-    const out = execFileSync('git', ['ls-files', '--', '.portable-check'], {
-      cwd: ROOT,
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-    });
-    return out.trim() !== '';
-  } catch {
-    return false; // 不是 git 仓库 / 没有 git：退化为可删除
-  }
-})();
-if (!trackedInGit) fs.rmSync(sandbox, { recursive: true, force: true });
+// `.portable-check` 是纯构建产物，已在 .gitignore 中（不变量由
+// check-no-tracked-artifacts.mjs 守着），因此可以放心整目录清理。
+fs.rmSync(sandbox, { recursive: true, force: true });
 
 console.log(fail === 0 ? '\n[OK] 便携包端到端验证通过' : `\n[FAIL] ${fail} 项失败`);
 process.exit(fail > 0 ? 1 : 0);
