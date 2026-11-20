@@ -141,7 +141,8 @@ pi-ai 一直在请求体顶层发 `reasoning_effort`，而 `lib/chat-shim.js` �
 ## 架构
 
 ```
-lib/index.js            host 侧入口：注册 qwenwork provider + 挂载状态路由
+lib/index.js            host 侧入口：装配实例 + 注册 provider + 挂载状态路由
+lib/runtime.js          装配实例：配置快照 / 模型目录 / 注册句柄（随 apply 生灭）
 lib/client.js           浏览器侧入口：设置卡片（__ModuleLoader__.load 包装）
 lib/web-status.js       状态路由：loopback-only + JWT 脱敏，汇总卡片数据
 lib/credentials-seam.js 与凭据层的唯一接缝（不重复实现解密）
@@ -159,6 +160,16 @@ lib/status-paths.js     host / client 共享常量
 凭据与 REST 实现（`lib/credentials.js`、`lib/auth.js`、`lib/rest.js`、
 `lib/errors.js`、`lib/dpapi.js`）。集成层**只通过接缝消费**，
 不重复实现任何解密逻辑。
+
+运行时有两条生命周期，分得比较清：
+
+| 生命周期 | 内容 | 存在形式 |
+|---|---|---|
+| 一次装配 | 配置快照、模型目录、适配器注册句柄 | `lib/runtime.js` 的实例，`dispose()` 后消失 |
+| 整个进程 | 环回聊天 shim（一个登录态、一个端口）、性能采样、凭据缓存 | `lib/index.js` 的模块级变量 |
+
+改配置时宿主会 `restart()` → dispose → 重新 `apply()`，实例跟着换；shim 不换
+——否则端口一变，`getBaseURL()` 会短暂返回占位地址，正在进行的对话被打断。
 
 ## 模型目录
 

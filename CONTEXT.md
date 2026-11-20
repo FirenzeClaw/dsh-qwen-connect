@@ -31,8 +31,13 @@
 
 ## 已核实的当前状态
 
-- 插件运行时状态是 **7 个模块级 `let`**：`lib/index.js:395-401`（shim 三件套）、`:414,417`（`activeModels` / `catalogSource`）、`:427,438`（`adapterRegistration` / `currentConfig`）。
-- `stopChatShim()` 定义在 `lib/index.js:663`，在 `lib/` 内**没有调用者**；运行期禁用插件后，监听环回端口的 HTTP server 与共享密钥存活到进程退出。
+- ~~插件运行时状态是 **7 个模块级 `let`**~~
+  已解决（本项提交）：配置快照、模型目录、注册句柄都收进 `lib/runtime.js` 的
+  装配实例，随 `dispose()` 消失。`lib/index.js` 只剩 4 个：shim 三件套
+  （**有意**进程级）与 `activeRuntime` 指针。
+- `stopChatShim()` 定义在 `lib/index.js`，在 `lib/` 内**没有调用者**——这是
+  **设计如此**：shim 随进程退出，不随装配释放（用户选定，代价是禁用插件后
+  仍监听一个只绑环回、要求内存共享密钥的端点，不可利用）。
 - Cordis 的 `update()`（`node_modules/@deepseek-ai/cordis/lib/index.js:1424`）会走 `restart()` → dispose → 重新 apply。
 - ~~重试叠两层：`lib/index.js:321` 用 `resolveRetryPolicy(undefined)` → `maxRetries: 5`；`lib/chat-shim.js:74` `UPSTREAM_MAX_ATTEMPTS = 3`。~~
   已解决（本项提交）：shim 层重试全部删除，退化为单次尝试；`retryPolicy`
@@ -54,7 +59,7 @@
 | C7 构建产物出库 | ✅ `8cab548` / `89bf1a4` |
 | C6 删没有消费者的契约层 | ✅ `39bc286` 起 |
 | C2 重试只留一个主人 | ✅ 本项提交 |
-| C3 运行时状态跟着 apply 走 | 待实施 |
+| C3 运行时状态跟着 apply 走 | ✅ 本项提交 |
 
 ## 约束与惯例（来自用户与本仓库）
 
