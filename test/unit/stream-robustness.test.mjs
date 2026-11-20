@@ -23,8 +23,6 @@ import {
   deriveSessionId,
   resolveModelKey,
   simpleHash,
-  RETRYABLE_STATUS,
-  isRetryableStatus,
 } from '../../lib/chat-shim.js';
 import {
   FALLBACK_QWENWORK_MODELS,
@@ -961,29 +959,18 @@ test('shim: 正确密钥通过且到达上游', async () => {
 });
 
 // ---------------------------------------------------------------------------
-// 上游重试策略（借鉴 Buddy2api 的 RETRYABLE_STATUS）
+// 重试归属：本层不重试，只把状态码原样交出去
 // ---------------------------------------------------------------------------
+//
+// 这里曾有一层自己的重试（最多 3 次），而 DSH 的 llm-retry 默认也启用
+// （最多 5 轮）。两层叠乘意味着一次 503 最多产生 15 次上游请求、超时最坏
+// 3×180s。删掉本层重试后，断言方向整个反过来：**shim 必须只打一次上游**。
 
-test('isRetryableStatus: 只把限流/网关瞬时故障视为可重试', () => {
-  for (const status of [408, 409, 425, 429, 500, 502, 503, 504]) {
-    assert.equal(isRetryableStatus(status), true, `${status} 应可重试`);
-  }
-  // 语义错误重试也不会变好，必须不重试
-  for (const status of [400, 401, 403, 404, 422]) {
-    assert.equal(isRetryableStatus(status), false, `${status} 不应重试`);
-  }
-});
-
-test('RETRYABLE_STATUS 与 Buddy2api 的常量集合一致', () => {
-  assert.deepEqual([...RETRYABLE_STATUS], [408, 409, 425, 429, 500, 502, 503, 504]);
-});
-
-test('shim: 上游首次 503、次次成功 —— 自动重试并最终 200', async () => {
+test('shim: 上游 503 —— 不重试，原样返回 503', async () => {
   let calls = 0;
   const upstream = await startFakeUpstream(async () => {
     calls++;
-    if (calls === 1) return { httpStatus: 503 };
-    return { pieces: [chunkFrame({ content: 'ok' }) + '\n\n', chunkFrame({}, 'stop') + '\n\n'] };
+    return { httpStatus: 503 };
   });
   const shim = await startShim(`http://127.0.0.1:${upstream.port}/upstream`);
   try {
@@ -992,17 +979,15 @@ test('shim: 上游首次 503、次次成功 —— 自动重试并最终 200', a
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${shim.secret}` },
       body: JSON.stringify({ model: 'pro', messages: [{ role: 'user', content: 'hi' }] }),
     });
-    assert.equal(res.status, 200, '503 后重试应成功');
-    assert.equal(calls, 2, '应恰好请求上游两次');
-    const frames = await collectSse(res);
-    assert.equal(frames.at(-1), '[DONE]');
+    assert.equal(res.status, 503, '状态码应原样透传，由 DSH 决定是否重试');
+    assert.equal(calls, 1, '本层不得重试——重试会与 DSH 的 5 轮叠乘');
   } finally {
     await shim.close();
     upstream.server.close();
   }
 });
 
-test('shim: 上游持续 429 —— 重试上限后按原状态码返回，不无限重试', async () => {
+test('shim: 上游持续 429 —— 只请求一次，状态码透传', async () => {
   let calls = 0;
   const upstream = await startFakeUpstream(async () => {
     calls++;
@@ -1015,15 +1000,15 @@ test('shim: 上游持续 429 —— 重试上限后按原状态码返回，不�
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${shim.secret}` },
       body: JSON.stringify({ model: 'pro', messages: [{ role: 'user', content: 'hi' }] }),
     });
-    assert.equal(res.status, 429, '持续失败应透传原状态码');
-    assert.equal(calls, 3, '应最多尝试 3 次');
+    assert.equal(res.status, 429);
+    assert.equal(calls, 1, `本层不得重试，实际打了 ${calls} 次上游`);
   } finally {
     await shim.close();
     upstream.server.close();
   }
 });
 
-test('shim: 上游 400 —— 不重试，立即返回', async () => {
+test('shim: 上游 400 —— 同样只打一次', async () => {
   let calls = 0;
   const upstream = await startFakeUpstream(async () => {
     calls++;
@@ -1041,6 +1026,41 @@ test('shim: 上游 400 —— 不重试，立即返回', async () => {
   } finally {
     await shim.close();
     upstream.server.close();
+  }
+});
+
+test('shim: 上游连不上 —— 只签一次名，返回 502', async () => {
+  // 传输层失败也不在本层重试：交给 DSH 的 TRANSPORT 分类处理。
+  //
+  // 用「指向一个没有监听的端口」制造真正的连接失败（连接被拒），
+  // 而不是让假上游抛错——后者只会让响应悬着，测到的是 180s 超时而非本行为。
+  // 计数靠签名次数：每发起一次上游请求就签一次名，因此签名次数 == 尝试次数。
+  let signCount = 0;
+  const shim = await startShim('http://127.0.0.1:1/upstream', {
+    signerFactory: async () => ({
+      describe: () => ({}),
+      dispose: () => {},
+      signInferRequest: (bodyJson) => {
+        signCount++;
+        return {
+          url: 'http://127.0.0.1:1/upstream',
+          headers: { 'Content-Type': 'application/json' },
+          body: bodyJson,
+          headerCount: 1,
+        };
+      },
+    }),
+  });
+  try {
+    const res = await fetch(shim.base, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${shim.secret}` },
+      body: JSON.stringify({ model: 'pro', messages: [{ role: 'user', content: 'hi' }] }),
+    });
+    assert.equal(res.status, 502);
+    assert.equal(signCount, 1, `本层不得重试，实际签了 ${signCount} 次名`);
+  } finally {
+    await shim.close();
   }
 });
 

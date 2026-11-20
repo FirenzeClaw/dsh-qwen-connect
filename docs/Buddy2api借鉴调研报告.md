@@ -2,6 +2,13 @@
 
 调研对象：https://github.com/wicm84266964/Buddy2api （v2.1.8，MIT）
 
+> ⚠️ **已被后续决策推翻的部分**（2026-11-20 补注）：本报告第四节建议「借鉴
+> `RETRYABLE_STATUS` 重试白名单」，插件当时也照此实现了一层自己的重试。
+> 后来的架构审查发现它与 DSH 自带的 `llm-retry` **叠乘**：一次 503 最多
+> 产生 3×5 = 15 次上游请求，超时最坏 15 分钟。该层重试已全部删除，重试
+> 只由 DSH 一层负责（规格 `specs/001-runtime-foundation` 的 FR-001..004）。
+> 文中其余结论仍然有效。
+
 ## 一、项目定位对比
 
 | 项 | Buddy2api | 本项目 dsh-qwen-connect |
@@ -83,7 +90,7 @@ is_reasoning = reasoning_control.enabled is True
 
 | 点 | 价值 | 决策 |
 |---|---|---|
-| `RETRYABLE_STATUS` 重试白名单 | 中 | **可借鉴**——我们当前无重试策略 |
+| `RETRYABLE_STATUS` 重试白名单 | 中 | ~~**可借鉴**~~ → **已回退**：自建重试与 DSH 的重试层叠乘，见文首补注 |
 | `unwrap_sse_payload` 原样透传优先 | 中 | 参考——我们走"解析+重建"，两者结果等价，暂不改 |
 | `model_config` 完整字段 | 低 | **不采纳**——实测无必要，且回归风险高 |
 | `is_reasoning` 显式设置 | 低 | **不采纳**——实测不能关闭思考链，且对质量无影响 |
