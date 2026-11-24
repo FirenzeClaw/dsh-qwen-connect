@@ -349,6 +349,26 @@ auth-v2.dat (v11)  ← AES-128-CBC, IV = 16 个空格
 
 回写同样保持 v11/CBC，否则 App 下次启动会读不出登录态。
 
+### 密钥环锁定时会自动解锁
+
+重启后 Default Keyring 常处于锁定态。探测脚本在 `GetSecret` 遇到锁定错误时
+会**先解锁该条目所属集合，再重读一次**，多数情况下用户什么都不用做。
+
+实测依据（gnome-keyring 50.0）：本机上 `Unlock()` 返回 `prompt='/'`，不弹窗、
+不要口令；该 keyring 是明文格式且 `lock-on-idle=false`。原来只读不解锁，等于
+每次开机都要求用户做一件机器能自己做完的事。
+
+三种结果会分开报，不再笼统说「已锁定」：
+
+| 内部标记 | 含义 |
+|---|---|
+| `LOCKED_PROMPT_NEEDED` | 解锁需要你在桌面上确认（会弹解锁框） |
+| `LOCKED_UNLOCK_FAILED` | 自动解锁失败，附真实原因 |
+| `READ_FAILED` | 可访问但读取失败，根本不是锁定问题 |
+
+所属集合从条目路径推导（`/org/freedesktop/secrets/collection/<coll>/<id>`），
+**不查** `Secret.Item.Collection` 属性——该属性在 gnome-keyring 50.0 上不存在。
+
 ## 聊天接入架构（阶段 A-2）
 
 ```
