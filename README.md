@@ -369,6 +369,8 @@ auth-v2.dat (v11)  ← AES-128-CBC, IV = 16 个空格
 所属集合从条目路径推导（`/org/freedesktop/secrets/collection/<coll>/<id>`），
 **不查** `Secret.Item.Collection` 属性——该属性在 gnome-keyring 50.0 上不存在。
 
+开机自动解锁（可选，更稳）与这背后的安全取舍，见 [docs/Linux密钥环.md](docs/Linux密钥环.md)。
+
 ## 聊天接入架构（阶段 A-2）
 
 ```
