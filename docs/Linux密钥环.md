@@ -89,19 +89,10 @@ default.keyring               71B  加密=true
 ## 排查命令
 
 ```bash
-# 哪条收藏集锁着、各有多少条目（不读任何值）
-node -e '
-const {spawnSync}=require("node:child_process");
-const S=`from gi.repository import Gio,GLib
-bus=Gio.bus_get_sync(Gio.BusType.SESSION,None)
-def c(p,i,m,s,a,r):
-    return bus.call_sync("org.freedesktop.secrets",p,i,m,GLib.Variant(s,a),GLib.VariantType(r),Gio.DBusCallFlags.NONE,20000,None).unpack()
-for coll in c("/org/freedesktop/secrets","org.freedesktop.DBus.Properties","Get","(ss)",("org.freedesktop.Secret.Service","Collections"),"(v)")[0]:
-    p=c(coll,"org.freedesktop.DBus.Properties","GetAll","(s)",("org.freedesktop.Secret.Collection",),"(a{sv})")[0]
-    print(coll, "locked=" + str(p.get("Locked")), "items=" + str(len(p.get("Items",[]))))';
-echo(S)`; console.log(spawnSync("python3",["-c",S],{encoding:"utf8"}).stdout)'
+# 哪条收藏集锁着、各有多少条目（只读属性，不读任何凭据值）
+node tools/linux/keyring-status.mjs
 
-# 手动解锁一次
+# 手动解锁一次（幂等，已解锁时直接报「已解锁」）
 ~/.local/bin/qwen-unlock-keyring.sh
 
 # 插件侧能否读到口令（只看长度，不打印内容）
